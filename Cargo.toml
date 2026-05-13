@@ -2,5 +2,24 @@
 name = "splatx"
 version = "0.1.0"
 edition = "2024"
+description = "3D & 4D Gaussian Splat renderer based on wgpu."
+license = "MIT"
+
+[features]
+default = ["web", "preview"]
+web = ["dep:wasm-bindgen"]
+preview = ["dep:winit"]
+
+[lib]
+name = "splatx"
+path = "src/lib.rs"
+
+[[bin]]
+name = "preview"
+required-features = ["preview"]
 
 [dependencies]
+glam = "0.32.1"
+wgpu = "29.0.3"
+wasm-bindgen = { version = "0.2.121", optional = true }
+winit = { version = "0.30.13", optional = true }
