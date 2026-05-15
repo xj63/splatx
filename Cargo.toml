@@ -1,18 +1,18 @@
 [package]
 name = "splatx"
 version = "0.1.0"
+authors = ["xj63 <xj63work@163.com>"]
 edition = "2024"
 description = "3D & 4D Gaussian Splat renderer based on wgpu."
 license = "MIT"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [features]
 default = ["web", "preview"]
-web = ["dep:wasm-bindgen"]
+web = ["dep:wasm-bindgen", "dep:tracing-wasm", "dep:console_error_panic_hook"]
 preview = ["dep:winit"]
-
-[lib]
-name = "splatx"
-path = "src/lib.rs"
 
 [[bin]]
 name = "preview"
@@ -21,5 +21,9 @@ required-features = ["preview"]
 [dependencies]
 glam = "0.32.1"
 wgpu = "29.0.3"
+tracing = "0.1.44"
+
 wasm-bindgen = { version = "0.2.121", optional = true }
 winit = { version = "0.30.13", optional = true }
+console_error_panic_hook = { version = "0.1.7", optional = true }
+tracing-wasm = { version = "0.2.1", optional = true }
