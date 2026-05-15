@@ -11,7 +11,10 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["web", "preview"]
-web = ["dep:wasm-bindgen", "dep:tracing-wasm", "dep:console_error_panic_hook"]
+web = [
+    "dep:wasm-bindgen", "dep:tracing-wasm", "dep:console_error_panic_hook",
+    "dep:js-sys", "dep:web-sys",
+]
 preview = ["dep:winit"]
 
 [[bin]]
@@ -23,7 +26,9 @@ glam = "0.32.1"
 wgpu = "29.0.3"
 tracing = "0.1.44"
 
-wasm-bindgen = { version = "0.2.121", optional = true }
 winit = { version = "0.30.13", optional = true }
+wasm-bindgen = { version = "0.2.121", optional = true }
 console_error_panic_hook = { version = "0.1.7", optional = true }
 tracing-wasm = { version = "0.2.1", optional = true }
+js-sys = { version = "0.3.98", optional = true }
+web-sys = { version = "0.3.98", optional = true }
