@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use splatx::render::TriangleRenderer;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -7,7 +10,8 @@ use winit::{
 
 #[derive(Default)]
 struct PreviewApp {
-    window: Option<Window>,
+    window: Option<Arc<Window>>,
+    renderer: Option<TriangleRenderer<'static>>,
 }
 
 impl ApplicationHandler for PreviewApp {
@@ -16,11 +20,18 @@ impl ApplicationHandler for PreviewApp {
             return;
         }
 
-        let window = event_loop
-            .create_window(WindowAttributes::default().with_title("splatx preview"))
-            .expect("failed to create preview window");
+        let window = Arc::new(
+            event_loop
+                .create_window(WindowAttributes::default().with_title("splatx preview"))
+                .expect("failed to create preview window"),
+        );
+        let size = window.inner_size();
+        let renderer =
+            pollster::block_on(TriangleRenderer::new(window.clone(), size.width, size.height))
+                .expect("failed to initialize renderer");
 
         self.window = Some(window);
+        self.renderer = Some(renderer);
     }
 
     fn window_event(
@@ -29,8 +40,25 @@ impl ApplicationHandler for PreviewApp {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        if matches!(event, WindowEvent::CloseRequested) {
-            event_loop.exit();
+        match event {
+            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Resized(size) => {
+                if let Some(renderer) = self.renderer.as_mut() {
+                    renderer.resize(size.width, size.height);
+                }
+            }
+            WindowEvent::RedrawRequested => {
+                if let Some(renderer) = self.renderer.as_mut() {
+                    renderer.render().expect("failed to render frame");
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
         }
     }
 }

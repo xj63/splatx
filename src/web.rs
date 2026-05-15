@@ -1,4 +1,7 @@
 use wasm_bindgen::prelude::*;
+use web_sys::HtmlCanvasElement;
+
+use crate::render::TriangleRenderer;
 
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -17,6 +20,29 @@ fn init_logger() {
 }
 
 #[wasm_bindgen]
-pub fn hello() {
-    tracing::info!("hello");
+pub struct WebRenderer {
+    renderer: TriangleRenderer<'static>,
+}
+
+#[wasm_bindgen]
+impl WebRenderer {
+    pub async fn create(canvas: HtmlCanvasElement) -> Result<WebRenderer, JsValue> {
+        let width = canvas.width();
+        let height = canvas.height();
+        let renderer = TriangleRenderer::new(wgpu::SurfaceTarget::Canvas(canvas), width, height)
+            .await
+            .map_err(|err| JsValue::from_str(&err))?;
+
+        Ok(Self { renderer })
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.renderer.resize(width, height);
+    }
+
+    pub fn render(&mut self) -> Result<(), JsValue> {
+        self.renderer
+            .render()
+            .map_err(|err| JsValue::from_str(&err))
+    }
 }
