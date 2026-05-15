@@ -1,0 +1,19 @@
+{
+  "name": "splatx",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build:wasm": "wasm-pack build --target bundler",
+    "dev": "bun run build:wasm && vite --config vite.demo.config.ts",
+    "build:lib": "bun run build:wasm && vite build --config vite.lib.config.ts",
+    "build:demo": "bun run build:wasm && vite build --config vite.demo.config.ts",
+    "build": "bun run build:lib && bun run build:demo"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "vite": "^8.0.12",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.6.0"
+  }
+}

@@ -20,6 +20,11 @@ fn init_logger() {
 }
 
 #[wasm_bindgen]
+pub fn hello() {
+    tracing::info!("hello");
+}
+
+#[wasm_bindgen]
 pub struct WebRenderer {
     renderer: TriangleRenderer<'static>,
 }
