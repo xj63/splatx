@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use web_sys::HtmlCanvasElement;
+use web_sys::{HtmlCanvasElement, OffscreenCanvas};
 
 use crate::render::TriangleRenderer;
 
@@ -35,6 +35,16 @@ impl WebRenderer {
         let width = canvas.width();
         let height = canvas.height();
         let renderer = TriangleRenderer::new(wgpu::SurfaceTarget::Canvas(canvas), width, height)
+            .await
+            .map_err(|err| JsValue::from_str(&err))?;
+
+        Ok(Self { renderer })
+    }
+
+    pub async fn create_offscreen(canvas: OffscreenCanvas) -> Result<WebRenderer, JsValue> {
+        let width = canvas.width();
+        let height = canvas.height();
+        let renderer = TriangleRenderer::new(wgpu::SurfaceTarget::OffscreenCanvas(canvas), width, height)
             .await
             .map_err(|err| JsValue::from_str(&err))?;
 

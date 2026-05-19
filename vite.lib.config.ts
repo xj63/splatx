@@ -6,6 +6,10 @@ export default defineConfig({
   plugins: [
     wasm(),
   ],
+  worker: {
+    format: "es",
+    plugins: () => [wasm()],
+  },
   build: {
     lib: {
       entry: resolve(__dirname, "ts/index.ts"),
