@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use splatx::render::TriangleRenderer;
+use splatx::triangle_render::TriangleRenderer;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -26,9 +26,12 @@ impl ApplicationHandler for PreviewApp {
                 .expect("failed to create preview window"),
         );
         let size = window.inner_size();
-        let renderer =
-            pollster::block_on(TriangleRenderer::new(window.clone(), size.width, size.height))
-                .expect("failed to initialize renderer");
+        let renderer = pollster::block_on(TriangleRenderer::new(
+            window.clone(),
+            size.width,
+            size.height,
+        ))
+        .expect("failed to initialize renderer");
 
         self.window = Some(window);
         self.renderer = Some(renderer);

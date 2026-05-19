@@ -15,5 +15,8 @@
     "vite": "^8.0.12",
     "vite-plugin-top-level-await": "^1.6.0",
     "vite-plugin-wasm": "^3.6.0"
+  },
+  "dependencies": {
+    "@types/node": "^25.9.0"
   }
 }

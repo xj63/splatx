@@ -1,4 +1,5 @@
-pub mod render;
+pub mod model;
+pub mod triangle_render;
 
 #[cfg(feature = "web")]
 #[cfg(target_arch = "wasm32")]

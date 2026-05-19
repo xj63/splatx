@@ -25,6 +25,10 @@ preview = ["dep:winit", "dep:pollster"]
 name = "preview"
 required-features = ["preview"]
 
+[[bin]]
+name = "inspect-npz"
+path = "src/bin/inspect_npz.rs"
+
 [dependencies]
 glam = "0.32.1"
 wgpu = "29.0.3"
@@ -41,3 +45,7 @@ web-sys = { version = "0.3.98", optional = true, features = [
     "HtmlCanvasElement",
     "OffscreenCanvas",
 ] }
+half = "2.7.1"
+ndarray-npy = "0.10.0"
+ndarray = "0.17.2"
+py_literal = "0.4"
