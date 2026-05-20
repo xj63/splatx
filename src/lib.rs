@@ -1,5 +1,6 @@
+pub mod camera;
 pub mod model;
-pub mod triangle_render;
+pub mod renderer;
 
 #[cfg(feature = "web")]
 #[cfg(target_arch = "wasm32")]

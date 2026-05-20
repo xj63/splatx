@@ -27,45 +27,34 @@ fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let model = SplatxModel::load_npz(path)?;
 
     println!("gaussians: {}", model.len());
-    print_array("means", Some(&model.means));
-    print_array("times", model.times.as_ref());
-    print_array("scales", model.scales.as_ref());
-    print_array("quats", model.quats.as_ref());
-    print_array("durations", model.durations.as_ref());
-    print_array("velocities", model.velocities.as_ref());
-    print_array("features_static", model.features_static.as_ref());
-    print_array("features_view", model.features_view.as_ref());
-    print_array("mlp_cont", model.mlp_cont.as_ref());
-    print_array("mlp_dc", model.mlp_dc.as_ref());
-    print_array("mlp_sh", model.mlp_sh.as_ref());
-    print_array("mlp_opacity", model.mlp_opacity.as_ref());
-
-    for (name, array) in &model.extra {
-        print_array(name, Some(array));
-    }
+    print_array("means", &model.means);
+    print_array("times", &model.times);
+    print_array("scales", &model.scales);
+    print_array("quats", &model.quats);
+    print_array("durations", &model.durations);
+    print_array("velocities", &model.velocities);
+    print_array("features_static", &model.features_static);
+    print_array("features_view", &model.features_view);
+    print_array("mlp_cont", &model.mlp_cont);
+    print_array("mlp_dc", &model.mlp_dc);
+    print_array("mlp_sh", &model.mlp_sh);
+    print_array("mlp_opacity", &model.mlp_opacity);
 
     Ok(())
 }
 
-fn print_array(name: &str, array: Option<&F16Array>) {
-    match array {
-        Some(array) => {
-            let stats = stats(array);
-            println!(
-                "{name}: shape={:?} dtype=f16 len={} finite={} mean={:.9} var={:.9} min={:.9} max={:.9}",
-                array.shape(),
-                stats.len,
-                stats.finite,
-                stats.mean,
-                stats.variance,
-                stats.min,
-                stats.max,
-            );
-        }
-        None => {
-            println!("{name}: missing");
-        }
-    }
+fn print_array(name: &str, array: &F16Array) {
+    let stats = stats(array);
+    println!(
+        "{name}: shape={:?} dtype=f16 len={} finite={} mean={:.9} var={:.9} min={:.9} max={:.9}",
+        array.shape(),
+        stats.len,
+        stats.finite,
+        stats.mean,
+        stats.variance,
+        stats.min,
+        stats.max,
+    );
 }
 
 fn stats(array: &ArrayD<f16>) -> Stats {

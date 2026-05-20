@@ -1,7 +1,6 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
     fs::File,
-    io::{self, Read},
+    io::{self, Read, Seek},
     path::Path,
 };
 
@@ -15,18 +14,17 @@ pub type F16Array = ArrayD<f16>;
 #[derive(Debug)]
 pub struct SplatxModel {
     pub means: F16Array,
-    pub times: Option<F16Array>,
-    pub scales: Option<F16Array>,
-    pub quats: Option<F16Array>,
-    pub durations: Option<F16Array>,
-    pub velocities: Option<F16Array>,
-    pub features_static: Option<F16Array>,
-    pub features_view: Option<F16Array>,
-    pub mlp_cont: Option<F16Array>,
-    pub mlp_dc: Option<F16Array>,
-    pub mlp_sh: Option<F16Array>,
-    pub mlp_opacity: Option<F16Array>,
-    pub extra: BTreeMap<String, F16Array>,
+    pub times: F16Array,
+    pub scales: F16Array,
+    pub quats: F16Array,
+    pub durations: F16Array,
+    pub velocities: F16Array,
+    pub features_static: F16Array,
+    pub features_view: F16Array,
+    pub mlp_cont: F16Array,
+    pub mlp_dc: F16Array,
+    pub mlp_sh: F16Array,
+    pub mlp_opacity: F16Array,
 }
 
 impl SplatxModel {
@@ -34,47 +32,27 @@ impl SplatxModel {
         path: impl AsRef<Path>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let file = File::open(path)?;
-        let mut npz = NpzReader::new(file)?;
-        let names = npz.names()?.into_iter().collect::<BTreeSet<_>>();
+        Self::load_npz_reader(file)
+    }
+
+    pub fn load_npz_reader(
+        reader: impl Read + Seek,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let mut npz = NpzReader::new(reader)?;
+        let names = npz.names()?.into_iter().collect::<Vec<_>>();
 
         let means = read_required_f16(&mut npz, &names, "means")?;
-        let times = read_optional_f16(&mut npz, &names, "times")?;
-        let scales = read_optional_f16(&mut npz, &names, "scales")?;
-        let quats = read_optional_f16(&mut npz, &names, "quats")?;
-        let durations = read_optional_f16(&mut npz, &names, "durations")?;
-        let velocities = read_optional_f16(&mut npz, &names, "velocities")?;
-        let features_static = read_optional_f16(&mut npz, &names, "features_static")?;
-        let features_view = read_optional_f16(&mut npz, &names, "features_view")?;
-        let mlp_cont = read_optional_f16(&mut npz, &names, "mlp_cont")?;
-        let mlp_dc = read_optional_f16(&mut npz, &names, "mlp_dc")?;
-        let mlp_sh = read_optional_f16(&mut npz, &names, "mlp_sh")?;
-        let mlp_opacity = read_optional_f16(&mut npz, &names, "mlp_opacity")?;
-
-        let known = [
-            "means",
-            "times",
-            "scales",
-            "quats",
-            "durations",
-            "velocities",
-            "features_static",
-            "features_view",
-            "scaling_t",
-            "rotation_r",
-            "mlp_cont",
-            "mlp_dc",
-            "mlp_sh",
-            "mlp_opacity",
-        ]
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-
-        let mut extra = BTreeMap::new();
-        for name in names.iter().filter(|name| !known.contains(name.as_str())) {
-            if let Ok(array) = read_f16(&mut npz, name) {
-                extra.insert(name.clone(), array);
-            }
-        }
+        let times = read_required_f16(&mut npz, &names, "times")?;
+        let scales = read_required_f16(&mut npz, &names, "scales")?;
+        let quats = read_required_f16(&mut npz, &names, "quats")?;
+        let durations = read_required_f16(&mut npz, &names, "durations")?;
+        let velocities = read_required_f16(&mut npz, &names, "velocities")?;
+        let features_static = read_required_f16(&mut npz, &names, "features_static")?;
+        let features_view = read_required_f16(&mut npz, &names, "features_view")?;
+        let mlp_cont = read_required_f16(&mut npz, &names, "mlp_cont")?;
+        let mlp_dc = read_required_f16(&mut npz, &names, "mlp_dc")?;
+        let mlp_sh = read_required_f16(&mut npz, &names, "mlp_sh")?;
+        let mlp_opacity = read_required_f16(&mut npz, &names, "mlp_opacity")?;
 
         Ok(Self {
             means,
@@ -89,7 +67,6 @@ impl SplatxModel {
             mlp_dc,
             mlp_sh,
             mlp_opacity,
-            extra,
         })
     }
 
@@ -110,26 +87,14 @@ pub fn load_npz(
 
 fn read_required_f16<R: Read + io::Seek>(
     npz: &mut NpzReader<R>,
-    names: &BTreeSet<String>,
+    names: &Vec<String>,
     name: &str,
 ) -> Result<F16Array, Box<dyn std::error::Error + Send + Sync>> {
-    if !names.contains(name) {
+    if !names.contains(&name.to_string()) {
         return Err(format!("missing required npz array {name:?}").into());
     }
 
     read_f16(npz, name)
-}
-
-fn read_optional_f16<R: Read + io::Seek>(
-    npz: &mut NpzReader<R>,
-    names: &BTreeSet<String>,
-    name: &str,
-) -> Result<Option<F16Array>, Box<dyn std::error::Error + Send + Sync>> {
-    if names.contains(name) {
-        read_f16(npz, name).map(Some)
-    } else {
-        Ok(None)
-    }
 }
 
 fn read_f16<R: Read + io::Seek>(
