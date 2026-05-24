@@ -2,6 +2,7 @@ mod alive_count;
 mod compact;
 mod cull;
 mod data;
+mod indirect;
 mod prefix_sum;
 mod profiler;
 mod util;
@@ -13,8 +14,9 @@ use self::{
     compact::CompactStage,
     cull::{CullParams, CullStage},
     data::{GpuModelData, upload_model},
+    indirect::IndirectStage,
     prefix_sum::PrefixSumStage,
-    profiler::{GpuProfiler, GpuProfilerFrame},
+    profiler::GpuProfiler,
     util::schedule_u32_buffer_stats_log,
 };
 
@@ -39,6 +41,7 @@ pub struct Renderer {
     cull: CullStage,
     prefix_sum: PrefixSumStage,
     compact: CompactStage,
+    indirect: IndirectStage,
     alive_count: AliveCountStage,
     profiler: GpuProfiler,
 }
@@ -51,6 +54,7 @@ impl Renderer {
         let cull = CullStage::new(device, &data, len);
         let prefix_sum = PrefixSumStage::new(device, len);
         let compact = CompactStage::new(device, len, cull.mask(), prefix_sum.prefix());
+        let indirect = IndirectStage::new(device, len, 256, cull.mask(), prefix_sum.prefix());
         let alive_count = AliveCountStage::new(device, len);
 
         Self {
@@ -59,6 +63,7 @@ impl Renderer {
             cull,
             prefix_sum,
             compact,
+            indirect,
             alive_count,
             profiler,
         }
@@ -87,6 +92,7 @@ impl Renderer {
             .execute(target.encoder, &mut profiler, self.cull.mask());
         self.compact
             .execute(target.encoder, target.queue, &mut profiler);
+        self.indirect.execute(target.encoder, &mut profiler);
         self.alive_count.execute(
             target.encoder,
             self.cull.mask(),
@@ -114,6 +120,13 @@ impl Renderer {
             "alive_indices",
             self.compact.alive_indices(),
             len,
+        );
+        schedule_u32_buffer_stats_log(
+            device,
+            encoder,
+            "indirect",
+            self.indirect.dispatch_args(),
+            4,
         );
     }
 
