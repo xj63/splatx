@@ -1,6 +1,7 @@
+mod alive_count;
+mod compact;
 mod cull;
 mod data;
-mod debug_count;
 mod prefix_sum;
 mod profiler;
 mod util;
@@ -8,9 +9,10 @@ mod util;
 use crate::{camera::Camera, model::SplatxModel};
 
 use self::{
+    alive_count::AliveCountStage,
+    compact::CompactStage,
     cull::{CullParams, CullStage},
     data::{GpuModelData, upload_model},
-    debug_count::DebugCountStage,
     prefix_sum::PrefixSumStage,
     profiler::{GpuProfiler, GpuProfilerFrame},
 };
@@ -35,7 +37,8 @@ pub struct Renderer {
     data: GpuModelData,
     cull: CullStage,
     prefix_sum: PrefixSumStage,
-    debug_count: DebugCountStage,
+    compact: CompactStage,
+    alive_count: AliveCountStage,
     profiler: GpuProfiler,
 }
 
@@ -50,14 +53,16 @@ impl Renderer {
         let profiler = GpuProfiler::new(device, queue);
         let cull = CullStage::new(device, &data, len);
         let prefix_sum = PrefixSumStage::new(device, len)?;
-        let debug_count = DebugCountStage::new(device, len);
+        let compact = CompactStage::new(device, len, cull.mask(), prefix_sum.prefix());
+        let alive_count = AliveCountStage::new(device, len);
 
         Ok(Self {
             model,
             data,
             cull,
             prefix_sum,
-            debug_count,
+            compact,
+            alive_count,
             profiler,
         })
     }
@@ -88,7 +93,9 @@ impl Renderer {
         )?;
         self.prefix_sum
             .execute(target.encoder, &mut profiler, self.cull.mask());
-        self.debug_count
+        self.compact
+            .execute(target.encoder, target.queue, &mut profiler);
+        self.alive_count
             .execute(target.encoder, self.cull.mask(), self.prefix_sum.prefix());
 
         profiler.finish(target.encoder);

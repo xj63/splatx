@@ -1,12 +1,12 @@
-pub struct DebugCountStage {
+pub struct AliveCountStage {
     readback: wgpu::Buffer,
     len: u32,
 }
 
-impl DebugCountStage {
+impl AliveCountStage {
     pub fn new(device: &wgpu::Device, len: u32) -> Self {
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("splatx debug-count readback"),
+            label: Some("splatx alive-count readback"),
             size: 8,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
@@ -32,7 +32,7 @@ impl DebugCountStage {
         let readback = self.readback.clone();
         encoder.map_buffer_on_submit(&self.readback, wgpu::MapMode::Read, ..8, move |result| {
             if let Err(error) = result {
-                tracing::warn!("failed to read debug cull count: {error}");
+                tracing::warn!("failed to read alive gaussian count: {error}");
                 return;
             }
 
@@ -40,7 +40,7 @@ impl DebugCountStage {
             let prefix_last = u32::from_le_bytes(bytes[0..4].try_into().expect("prefix last"));
             let mask_last = u32::from_le_bytes(bytes[4..8].try_into().expect("mask last"));
             let alive_gaussians = prefix_last + mask_last;
-            tracing::info!(alive_gaussians, "temporary prefix-sum debug");
+            tracing::info!(alive_gaussians, "alive gaussian count");
             drop(bytes);
             readback.unmap();
         });
