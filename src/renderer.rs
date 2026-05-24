@@ -5,6 +5,7 @@ mod data;
 mod indirect;
 mod prefix_sum;
 mod profiler;
+mod project;
 mod util;
 
 use crate::{camera::Camera, model::SplatxModel};
@@ -17,6 +18,7 @@ use self::{
     indirect::IndirectStage,
     prefix_sum::PrefixSumStage,
     profiler::GpuProfiler,
+    project::{PROJECT_WORKGROUP_SIZE, ProjectStage},
     util::schedule_u32_buffer_stats_log,
 };
 
@@ -42,6 +44,7 @@ pub struct Renderer {
     prefix_sum: PrefixSumStage,
     compact: CompactStage,
     indirect: IndirectStage,
+    project: ProjectStage,
     alive_count: AliveCountStage,
     profiler: GpuProfiler,
 }
@@ -54,7 +57,20 @@ impl Renderer {
         let cull = CullStage::new(device, &data, len);
         let prefix_sum = PrefixSumStage::new(device, len);
         let compact = CompactStage::new(device, len, cull.mask(), prefix_sum.prefix());
-        let indirect = IndirectStage::new(device, len, 256, cull.mask(), prefix_sum.prefix());
+        let indirect = IndirectStage::new(
+            device,
+            len,
+            PROJECT_WORKGROUP_SIZE,
+            cull.mask(),
+            prefix_sum.prefix(),
+        );
+        let project = ProjectStage::new(
+            device,
+            len,
+            &data,
+            compact.alive_indices(),
+            indirect.dispatch_args(),
+        );
         let alive_count = AliveCountStage::new(device, len);
 
         Self {
@@ -64,6 +80,7 @@ impl Renderer {
             prefix_sum,
             compact,
             indirect,
+            project,
             alive_count,
             profiler,
         }
@@ -92,12 +109,21 @@ impl Renderer {
             .execute(target.encoder, &mut profiler, self.cull.mask());
         self.compact
             .execute(target.encoder, target.queue, &mut profiler);
-        self.indirect.execute(target.encoder, &mut profiler);
         self.alive_count.execute(
             target.encoder,
             self.cull.mask(),
             self.prefix_sum.prefix(),
             time,
+        );
+        self.indirect.execute(target.encoder, &mut profiler);
+        self.project.execute(
+            target.encoder,
+            target.queue,
+            &mut profiler,
+            camera,
+            time,
+            target.width,
+            target.height,
         );
 
         profiler.finish(target.encoder);
