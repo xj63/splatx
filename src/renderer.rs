@@ -1,7 +1,23 @@
+mod cull;
+mod data;
+mod debug_count;
+mod prefix_sum;
+mod profiler;
+mod util;
+
 use crate::{camera::Camera, model::SplatxModel};
+
+use self::{
+    cull::{CullParams, CullStage},
+    data::{GpuModelData, upload_model},
+    debug_count::DebugCountStage,
+    prefix_sum::PrefixSumStage,
+    profiler::{GpuProfiler, GpuProfilerFrame},
+};
 
 pub struct RenderTarget<'a> {
     pub encoder: &'a mut wgpu::CommandEncoder,
+    pub queue: &'a wgpu::Queue,
     pub color_view: &'a wgpu::TextureView,
     pub format: wgpu::TextureFormat,
     pub width: u32,
@@ -16,31 +32,71 @@ impl RenderTarget<'_> {
 
 pub struct Renderer {
     model: SplatxModel,
+    data: GpuModelData,
+    cull: CullStage,
+    prefix_sum: PrefixSumStage,
+    debug_count: DebugCountStage,
+    profiler: GpuProfiler,
 }
 
 impl Renderer {
-    pub fn new(model: SplatxModel) -> Self {
-        Self { model }
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        model: SplatxModel,
+    ) -> Result<Self, String> {
+        let data = upload_model(device, &model);
+        let len = model.len() as u32;
+        let profiler = GpuProfiler::new(device, queue);
+        let cull = CullStage::new(device, &data, len);
+        let prefix_sum = PrefixSumStage::new(device, len)?;
+        let debug_count = DebugCountStage::new(device, len);
+
+        Ok(Self {
+            model,
+            data,
+            cull,
+            prefix_sum,
+            debug_count,
+            profiler,
+        })
     }
 
     pub fn render(
         &mut self,
         camera: &Camera,
-        t: f32,
+        time: f32,
         target: RenderTarget<'_>,
     ) -> Result<(), String> {
-        let _model = &self.model;
-        let _view_projection = camera.view_projection_matrix(target.aspect_ratio());
-        let _t = t;
+        let mut target = target;
+        let view_projection = camera
+            .view_projection_matrix(target.aspect_ratio())
+            .to_cols_array();
 
-        Self::clear(target, wgpu::Color::BLACK);
+        let mut profiler = self.profiler.begin_frame();
 
-        // 4DGS render implementation will be added here.
+        Self::clear(&mut target, wgpu::Color::BLACK);
+
+        self.cull.execute(
+            target.encoder,
+            target.queue,
+            &mut profiler,
+            CullParams {
+                view_projection,
+                time,
+            },
+        )?;
+        self.prefix_sum
+            .execute(target.encoder, &mut profiler, self.cull.mask());
+        self.debug_count
+            .execute(target.encoder, self.cull.mask(), self.prefix_sum.prefix());
+
+        profiler.finish(target.encoder);
         Ok(())
     }
 
-    pub fn clear(target: RenderTarget<'_>, color: wgpu::Color) {
-        let _pass = target
+    pub fn clear(target: &mut RenderTarget<'_>, color: wgpu::Color) {
+        target
             .encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("splatx clear pass"),
@@ -58,73 +114,12 @@ impl Renderer {
     }
 }
 
-use crate::model::F16Array;
-use half::f16;
-use ndarray::ArrayD;
-fn print_array(name: &str, array: &F16Array) {
-    let stats = stats(array);
-    tracing::info!(
-        "{name}: shape={:?} dtype=f16 len={} finite={} mean={:.9} var={:.9} min={:.9} max={:.9}",
-        array.shape(),
-        stats.len,
-        stats.finite,
-        stats.mean,
-        stats.variance,
-        stats.min,
-        stats.max,
-    );
-}
+pub fn recommended_device_features(adapter: &wgpu::Adapter) -> wgpu::Features {
+    let supported = adapter.features();
 
-fn stats(array: &ArrayD<f16>) -> Stats {
-    let mut len = 0_usize;
-    let mut finite = 0_usize;
-    let mut mean = 0_f64;
-    let mut m2 = 0_f64;
-    let mut min = f32::INFINITY;
-    let mut max = f32::NEG_INFINITY;
+    let profiler_need =
+        wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES;
+    let prefix_sum_need = wgpu::Features::SUBGROUP;
 
-    for value in array.iter().map(|value| value.to_f32()) {
-        len += 1;
-        if !value.is_finite() {
-            continue;
-        }
-
-        finite += 1;
-        min = min.min(value);
-        max = max.max(value);
-
-        let value = value as f64;
-        let delta = value - mean;
-        mean += delta / finite as f64;
-        let delta2 = value - mean;
-        m2 += delta * delta2;
-    }
-
-    let variance = if finite > 0 {
-        m2 / finite as f64
-    } else {
-        f64::NAN
-    };
-    if finite == 0 {
-        min = f32::NAN;
-        max = f32::NAN;
-    }
-
-    Stats {
-        len,
-        finite,
-        mean,
-        variance,
-        min,
-        max,
-    }
-}
-
-struct Stats {
-    len: usize,
-    finite: usize,
-    mean: f64,
-    variance: f64,
-    min: f32,
-    max: f32,
+    supported & (profiler_need | prefix_sum_need)
 }

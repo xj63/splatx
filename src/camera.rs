@@ -16,7 +16,7 @@ impl Default for Camera {
             position: Vec3::new(0.0, 0.0, 3.0),
             target: Vec3::ZERO,
             up: Vec3::Y,
-            fovy_radians: 45.0_f32.to_radians(),
+            fovy_radians: std::f32::consts::FRAC_PI_4,
             znear: 0.01,
             zfar: 10_000.0,
         }

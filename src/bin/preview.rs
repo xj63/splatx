@@ -3,7 +3,7 @@ use std::sync::Arc;
 use splatx::{
     camera::Camera,
     model::SplatxModel,
-    renderer::{RenderTarget, Renderer},
+    renderer::{RenderTarget, Renderer, recommended_device_features},
 };
 use winit::{
     application::ApplicationHandler,
@@ -46,7 +46,7 @@ impl PreviewSurface {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("splatx preview device"),
-                required_features: wgpu::Features::empty(),
+                required_features: recommended_device_features(&adapter),
                 required_limits: wgpu::Limits::default(),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: wgpu::MemoryHints::Performance,
@@ -60,6 +60,11 @@ impl PreviewSurface {
             .ok_or_else(|| "surface is not supported by the selected adapter".to_string())?;
         surface.configure(&device, &config);
 
+        let renderer = match model {
+            Some(model) => Some(Renderer::new(&device, &queue, model)?),
+            None => None,
+        };
+
         Ok(Self {
             surface,
             device,
@@ -67,7 +72,7 @@ impl PreviewSurface {
             config,
             camera: Camera::default(),
             time: 0.0,
-            renderer: model.map(Renderer::new),
+            renderer,
         })
     }
 
@@ -112,6 +117,7 @@ impl PreviewSurface {
                 self.time,
                 RenderTarget {
                     encoder: &mut encoder,
+                    queue: &self.queue,
                     color_view: &view,
                     format: self.config.format,
                     width: self.config.width,
@@ -191,19 +197,15 @@ impl ApplicationHandler for PreviewApp {
     }
 }
 
+fn init_logger() {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+}
+
 fn main() -> Result<(), winit::error::EventLoopError> {
     init_logger();
 
     let event_loop = EventLoop::new()?;
     event_loop.run_app(&mut PreviewApp::default())
-}
-
-fn init_logger() {
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .with_target(false)
-        .init();
 }

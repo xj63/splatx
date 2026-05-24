@@ -4,7 +4,7 @@ use web_sys::{HtmlCanvasElement, OffscreenCanvas};
 use crate::{
     camera::Camera,
     model::SplatxModel,
-    renderer::{RenderTarget, Renderer},
+    renderer::{RenderTarget, Renderer, recommended_device_features},
 };
 
 #[wasm_bindgen(start)]
@@ -23,29 +23,6 @@ fn init_logger() {
     tracing_wasm::set_as_global_default();
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Timeline {
-    time: f32,
-    min_time: f32,
-    max_time: f32,
-}
-
-impl Default for Timeline {
-    fn default() -> Self {
-        Self {
-            time: 0.0,
-            min_time: 0.0,
-            max_time: 1.0,
-        }
-    }
-}
-
-impl Timeline {
-    fn set_time(&mut self, time: f32) {
-        self.time = time.clamp(self.min_time, self.max_time);
-    }
-}
-
 #[wasm_bindgen]
 pub struct WebRenderer {
     surface: wgpu::Surface<'static>,
@@ -53,7 +30,6 @@ pub struct WebRenderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     camera: Camera,
-    timeline: Timeline,
     renderer: Option<Renderer>,
 }
 
@@ -80,7 +56,7 @@ impl WebRenderer {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("splatx web device"),
-                required_features: wgpu::Features::empty(),
+                required_features: recommended_device_features(&adapter),
                 required_limits: wgpu::Limits::default(),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: wgpu::MemoryHints::Performance,
@@ -100,7 +76,6 @@ impl WebRenderer {
             queue,
             config,
             camera: Camera::default(),
-            timeline: Timeline::default(),
             renderer: None,
         })
     }
@@ -138,35 +113,11 @@ impl WebRenderer {
         let cursor = std::io::Cursor::new(bytes);
         let model = SplatxModel::load_npz_reader(cursor)
             .map_err(|err| JsValue::from_str(&err.to_string()))?;
-        self.renderer = Some(Renderer::new(model));
+        self.renderer = Some(
+            Renderer::new(&self.device, &self.queue, model)
+                .map_err(|err| JsValue::from_str(&err))?,
+        );
         Ok(())
-    }
-
-    pub fn set_time(&mut self, time: f32) {
-        self.timeline.set_time(time);
-    }
-
-    pub fn set_time_range(&mut self, min_time: f32, max_time: f32) {
-        self.timeline.min_time = min_time;
-        self.timeline.max_time = max_time.max(min_time);
-        self.timeline.set_time(self.timeline.time);
-    }
-
-    pub fn look_at(
-        &mut self,
-        position_x: f32,
-        position_y: f32,
-        position_z: f32,
-        target_x: f32,
-        target_y: f32,
-        target_z: f32,
-        up_x: f32,
-        up_y: f32,
-        up_z: f32,
-    ) {
-        self.camera.position = glam::Vec3::new(position_x, position_y, position_z);
-        self.camera.target = glam::Vec3::new(target_x, target_y, target_z);
-        self.camera.up = glam::Vec3::new(up_x, up_y, up_z);
     }
 
     pub fn set_camera(
@@ -194,7 +145,7 @@ impl WebRenderer {
         };
     }
 
-    pub fn render(&mut self) -> Result<(), JsValue> {
+    pub fn render(&mut self, t: f32) -> Result<(), JsValue> {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -223,9 +174,10 @@ impl WebRenderer {
             renderer
                 .render(
                     &self.camera,
-                    self.timeline.time,
+                    t,
                     RenderTarget {
                         encoder: &mut encoder,
+                        queue: &self.queue,
                         color_view: &view,
                         format: self.config.format,
                         width: self.config.width,

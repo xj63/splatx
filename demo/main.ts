@@ -53,10 +53,28 @@ function createModelPicker() {
 const canvas = getCanvas();
 const picker = createModelPicker();
 const renderer = await createRenderer(canvas);
+let frame: number | null = null;
+let playbackStart = 0;
 
-renderer.onend = () => {
-  renderer.play({ from: 0, to: 1, duration: 6 });
-};
+function startPlayback() {
+  stopPlayback();
+  playbackStart = performance.now();
+  frame = requestAnimationFrame(renderFrame);
+}
+
+function stopPlayback() {
+  if (frame !== null) {
+    cancelAnimationFrame(frame);
+    frame = null;
+  }
+}
+
+function renderFrame(now: number) {
+  const duration = 6_000;
+  const time = ((now - playbackStart) % duration) / duration;
+  renderer.render(time);
+  frame = requestAnimationFrame(renderFrame);
+}
 
 async function loadResource(resource: string) {
   const url = resourceToFetchUrl(resource);
@@ -67,7 +85,7 @@ async function loadResource(resource: string) {
   }
 
   renderer.loadModel(await response.arrayBuffer());
-  renderer.play({ from: 0, to: 1, duration: 6 });
+  startPlayback();
 }
 
 async function syncHashResource() {
@@ -75,7 +93,7 @@ async function syncHashResource() {
   picker.hidden = resource !== null;
 
   if (!resource) {
-    renderer.pause();
+    stopPlayback();
     return;
   }
 

@@ -12,14 +12,22 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["web", "preview"]
 web = [
-    "dep:wasm-bindgen",
-    "dep:tracing-wasm",
-    "dep:console_error_panic_hook",
-    "dep:js-sys",
-    "dep:web-sys",
-    "dep:wasm-bindgen-futures",
+  "dep:wasm-bindgen",
+  "dep:tracing-wasm",
+  "dep:console_error_panic_hook",
+  "dep:js-sys",
+  "dep:web-sys",
+  "dep:wasm-bindgen-futures",
 ]
-preview = ["dep:winit", "dep:pollster", "dep:tracing-subscriber"]
+preview = [
+  "dep:winit",
+  "dep:pollster",
+  "dep:tracing-subscriber",
+  "dep:serde",
+  "dep:serde_json",
+  "dep:image",
+  "dep:clap",
+]
 
 [[bin]]
 name = "preview"
@@ -29,26 +37,37 @@ required-features = ["preview"]
 name = "inspect-npz"
 path = "src/bin/inspect_npz.rs"
 
-[dependencies]
-glam = "0.32.1"
-wgpu = "29.0.3"
-tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", optional = true, features = [
-    "env-filter",
-] }
+[[bin]]
+name = "render-image"
+path = "src/bin/render_image.rs"
+required-features = ["preview"]
 
-winit = { version = "0.30.13", optional = true }
-pollster = { version = "0.4.0", optional = true }
-wasm-bindgen = { version = "0.2.121", optional = true }
-wasm-bindgen-futures = { version = "0.4.71", optional = true }
-console_error_panic_hook = { version = "0.1.7", optional = true }
-tracing-wasm = { version = "0.2.1", optional = true }
-js-sys = { version = "0.3.98", optional = true }
-web-sys = { version = "0.3.98", optional = true, features = [
-    "HtmlCanvasElement",
-    "OffscreenCanvas",
-] }
-half = "2.7.1"
-ndarray-npy = "0.10.0"
-ndarray = "0.17.2"
+[dependencies]
+glam = "0.33"
+wgpu = "29.0"
+tracing = "0.1"
+half = { version = "2.7", features = ["bytemuck"] }
+ndarray-npy = "0.10"
+ndarray = "0.17"
 py_literal = "0.4"
+bytemuck = "1.25.0"
+
+tracing-subscriber = { version = "0.3", optional = true, features = [
+  "env-filter",
+] }
+serde = { version = "1.0", optional = true, features = ["derive"] }
+serde_json = { version = "1.0", optional = true }
+image = { version = "0.25", optional = true }
+clap = { version = "4.6", optional = true, features = ["derive"] }
+winit = { version = "0.30", optional = true }
+pollster = { version = "0.4", optional = true }
+
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+tracing-wasm = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+  "HtmlCanvasElement",
+  "OffscreenCanvas",
+] }

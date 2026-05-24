@@ -1,24 +1,15 @@
 export interface Renderer {
   readonly canvas: HTMLCanvasElement;
-  onend: (() => void) | null;
   loadModel(data: ArrayBuffer | Uint8Array): void;
-  setTime(time: number): void;
-  setTimeRange(minTime: number, maxTime: number): void;
-  play(options?: PlayOptions): void;
-  lookAt(camera: LookAtCamera): void;
+  render(time: number): void;
   setCamera(camera: Camera): void;
-  pause(): void;
-  resume(): void;
   dispose(): void;
 }
 
-export interface LookAtCamera {
+export interface Camera {
   position: Vec3Tuple;
   target: Vec3Tuple;
   up?: Vec3Tuple;
-}
-
-export interface Camera extends LookAtCamera {
   fovyRadians?: number;
   znear?: number;
   zfar?: number;
@@ -26,30 +17,34 @@ export interface Camera extends LookAtCamera {
 
 export type Vec3Tuple = [number, number, number];
 
-export interface PlayOptions {
-  from?: number;
-  to?: number;
-  duration?: number;
-}
-
 type WorkerMessage =
   | { type: "init"; canvas: OffscreenCanvas; width: number; height: number }
   | { type: "resize"; width: number; height: number }
-  | { type: "set-running"; running: boolean }
   | { type: "load-model"; data: Uint8Array }
-  | { type: "set-time"; time: number }
-  | { type: "set-time-range"; minTime: number; maxTime: number }
-  | { type: "look-at"; camera: Required<LookAtCamera> }
+  | { type: "render"; time: number }
   | { type: "set-camera"; camera: Required<Camera> }
   | { type: "destroy" };
 
-function getCanvasSize(canvas: HTMLCanvasElement) {
-  const scale = window.devicePixelRatio || 1;
-  return {
-    width: Math.max(1, Math.floor(canvas.clientWidth * scale)),
-    height: Math.max(1, Math.floor(canvas.clientHeight * scale)),
-  };
-}
+const defaultCamera: Required<Camera> = {
+  position: [
+    0.44396468423162905,
+    -1.1035034400953323,
+    -0.3499272977464685,
+  ],
+  target: [
+    0.5478754702925966,
+    -1.0966363123253844,
+    0.6446356168528959,
+  ],
+  up: [
+    0.9943491646907965,
+    0.021132652881061354,
+    -0.10403436769127798,
+  ],
+  fovyRadians: 1.2135940334461468,
+  znear: 8.831384232013642,
+  zfar: 109.77542390000633,
+};
 
 export async function createRenderer(
   canvas: HTMLCanvasElement,
@@ -62,24 +57,13 @@ export async function createRenderer(
     type: "module",
   });
   const offscreen = canvas.transferControlToOffscreen();
-  let size = getCanvasSize(canvas);
-  let visible = false;
-  let paused = false;
+  const visibility = createVisibilityTracker(canvas);
+  const resize = createResizeTracker(canvas, (size) => {
+    post({ type: "resize", ...size });
+  });
+  const cameraControls = createOrbitCameraControls(canvas, setCamera);
+
   let disposed = false;
-  let running = false;
-  let resizeFrame: number | null = null;
-  let playbackFrame: number | null = null;
-  let playbackFrom = 0;
-  let playbackTo = 1;
-  let playbackDuration = 1;
-  let playbackStart = 0;
-  let onend: (() => void) | null = null;
-  let yaw = 0.7;
-  let pitch = 0.35;
-  let distance = 3.0;
-  let dragging = false;
-  let lastPointerX = 0;
-  let lastPointerY = 0;
 
   function post(message: WorkerMessage) {
     if (!disposed) {
@@ -87,75 +71,156 @@ export async function createRenderer(
     }
   }
 
-  function flushResize() {
-    resizeFrame = null;
+  function setCamera(camera: Camera) {
+    post({
+      type: "set-camera",
+      camera: normalizeCamera(camera),
+    });
+  }
 
+  worker.postMessage(
+    {
+      type: "init",
+      canvas: offscreen,
+      ...resize.current(),
+    } satisfies WorkerMessage,
+    [offscreen],
+  );
+  cameraControls.sync();
+
+  return {
+    canvas,
+    loadModel(data) {
+      const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+      post({ type: "load-model", data: bytes });
+    },
+    render(time) {
+      if (visibility.visible()) {
+        post({ type: "render", time });
+      }
+    },
+    setCamera,
+    dispose() {
+      if (disposed) {
+        return;
+      }
+
+      disposed = true;
+      resize.dispose();
+      visibility.dispose();
+      cameraControls.dispose();
+      worker.postMessage({ type: "destroy" } satisfies WorkerMessage);
+      worker.terminate();
+    },
+  };
+}
+
+function normalizeCamera(camera: Camera): Required<Camera> {
+  return {
+    position: camera.position,
+    target: camera.target,
+    up: camera.up ?? [0, 1, 0],
+    fovyRadians: camera.fovyRadians ?? Math.PI / 4,
+    znear: camera.znear ?? 0.01,
+    zfar: camera.zfar ?? 10000,
+  };
+}
+
+function getCanvasSize(canvas: HTMLCanvasElement) {
+  const scale = window.devicePixelRatio || 1;
+  return {
+    width: Math.max(1, Math.floor(canvas.clientWidth * scale)),
+    height: Math.max(1, Math.floor(canvas.clientHeight * scale)),
+  };
+}
+
+function createResizeTracker(
+  canvas: HTMLCanvasElement,
+  onResize: (size: { width: number; height: number }) => void,
+) {
+  let size = getCanvasSize(canvas);
+  let frame: number | null = null;
+
+  function flush() {
+    frame = null;
     const nextSize = getCanvasSize(canvas);
     if (nextSize.width === size.width && nextSize.height === size.height) {
       return;
     }
 
     size = nextSize;
-    post({ type: "resize", ...size });
+    onResize(size);
   }
 
-  function scheduleResize() {
-    if (resizeFrame !== null) {
-      return;
-    }
-
-    resizeFrame = requestAnimationFrame(flushResize);
-  }
-
-  function updateRunning() {
-    const nextRunning = visible && !document.hidden && !paused;
-    if (nextRunning === running) {
-      return;
-    }
-
-    running = nextRunning;
-    post({ type: "set-running", running });
-  }
-
-  function stopPlayback() {
-    if (playbackFrame !== null) {
-      cancelAnimationFrame(playbackFrame);
-      playbackFrame = null;
+  function schedule() {
+    if (frame === null) {
+      frame = requestAnimationFrame(flush);
     }
   }
 
-  function playbackTick(now: number) {
-    const progress = Math.min(1, (now - playbackStart) / (playbackDuration * 1000));
-    const time = playbackFrom + (playbackTo - playbackFrom) * progress;
-    post({ type: "set-time", time });
+  const resizeObserver = new ResizeObserver(schedule);
+  resizeObserver.observe(canvas);
+  window.addEventListener("resize", schedule);
 
-    if (progress >= 1) {
-      playbackFrame = null;
-      paused = true;
-      updateRunning();
-      onend?.();
-      return;
-    }
+  return {
+    current: () => size,
+    dispose() {
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+      }
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", schedule);
+    },
+  };
+}
 
-    playbackFrame = requestAnimationFrame(playbackTick);
-  }
+function createVisibilityTracker(canvas: HTMLCanvasElement) {
+  let visible = true;
 
-  function updateCamera() {
-    const clampedPitch = Math.max(-1.45, Math.min(1.45, pitch));
+  const intersectionObserver = new IntersectionObserver(([entry]) => {
+    visible = Boolean(entry?.isIntersecting);
+  });
+  intersectionObserver.observe(canvas);
+
+  return {
+    visible: () => visible && !document.hidden,
+    dispose() {
+      intersectionObserver.disconnect();
+    },
+  };
+}
+
+function createOrbitCameraControls(
+  canvas: HTMLCanvasElement,
+  setCamera: (camera: Camera) => void,
+) {
+  const target = defaultCamera.target;
+  const up = defaultCamera.up;
+  const fovyRadians = defaultCamera.fovyRadians;
+  const znear = defaultCamera.znear;
+  const zfar = defaultCamera.zfar;
+  const initialOffset = subtract(defaultCamera.position, target);
+  let distance = Math.max(0.0001, length(initialOffset));
+  let yaw = Math.atan2(initialOffset[0], initialOffset[2]);
+  let pitch = Math.asin(clamp(initialOffset[1] / distance, -1, 1));
+  let dragging = false;
+  let lastPointerX = 0;
+  let lastPointerY = 0;
+
+  function sync() {
+    const clampedPitch = clamp(pitch, -1.45, 1.45);
     const cp = Math.cos(clampedPitch);
-    const position: Vec3Tuple = [
-      Math.sin(yaw) * cp * distance,
-      Math.sin(clampedPitch) * distance,
-      Math.cos(yaw) * cp * distance,
-    ];
-
-    post({
-      type: "look-at",
-      camera: {
-        position,
-        target: [0, 0, 0],
-        up: [0, 1, 0],
-      },
+    setCamera({
+      position: [
+        target[0] + Math.sin(yaw) * cp * distance,
+        target[1] + Math.sin(clampedPitch) * distance,
+        target[2] + Math.cos(yaw) * cp * distance,
+      ],
+      target,
+      up,
+      fovyRadians,
+      znear,
+      zfar,
     });
   }
 
@@ -175,10 +240,9 @@ export async function createRenderer(
     const dy = event.clientY - lastPointerY;
     lastPointerX = event.clientX;
     lastPointerY = event.clientY;
-
     yaw -= dx * 0.008;
     pitch += dy * 0.008;
-    updateCamera();
+    sync();
   }
 
   function handlePointerUp(event: PointerEvent) {
@@ -191,128 +255,35 @@ export async function createRenderer(
   function handleWheel(event: WheelEvent) {
     event.preventDefault();
     distance = Math.max(1.2, Math.min(20, distance * Math.exp(event.deltaY * 0.001)));
-    updateCamera();
+    sync();
   }
 
-  const resizeObserver = new ResizeObserver(() => {
-    scheduleResize();
-  });
-  resizeObserver.observe(canvas);
-
-  const intersectionObserver = new IntersectionObserver(([entry]) => {
-    visible = Boolean(entry?.isIntersecting);
-    updateRunning();
-  });
-  intersectionObserver.observe(canvas);
-
-  document.addEventListener("visibilitychange", updateRunning);
-  window.addEventListener("resize", scheduleResize);
   canvas.addEventListener("pointerdown", handlePointerDown);
   canvas.addEventListener("pointermove", handlePointerMove);
   canvas.addEventListener("pointerup", handlePointerUp);
   canvas.addEventListener("pointercancel", handlePointerUp);
   canvas.addEventListener("wheel", handleWheel, { passive: false });
 
-  worker.postMessage(
-    {
-      type: "init",
-      canvas: offscreen,
-      width: size.width,
-      height: size.height,
-    } satisfies WorkerMessage,
-    [offscreen],
-  );
-
-  function dispose() {
-    if (disposed) return;
-
-    disposed = true;
-    if (resizeFrame !== null) {
-      cancelAnimationFrame(resizeFrame);
-      resizeFrame = null;
-    }
-    stopPlayback();
-    resizeObserver.disconnect();
-    intersectionObserver.disconnect();
-    document.removeEventListener("visibilitychange", updateRunning);
-    window.removeEventListener("resize", scheduleResize);
-    canvas.removeEventListener("pointerdown", handlePointerDown);
-    canvas.removeEventListener("pointermove", handlePointerMove);
-    canvas.removeEventListener("pointerup", handlePointerUp);
-    canvas.removeEventListener("pointercancel", handlePointerUp);
-    canvas.removeEventListener("wheel", handleWheel);
-    worker.postMessage({ type: "destroy" } satisfies WorkerMessage);
-    worker.terminate();
-  }
-
-  scheduleResize();
-  updateCamera();
-  updateRunning();
-
-  const renderer: Renderer = {
-    canvas,
-    get onend() {
-      return onend;
+  return {
+    sync,
+    dispose() {
+      canvas.removeEventListener("pointerdown", handlePointerDown);
+      canvas.removeEventListener("pointermove", handlePointerMove);
+      canvas.removeEventListener("pointerup", handlePointerUp);
+      canvas.removeEventListener("pointercancel", handlePointerUp);
+      canvas.removeEventListener("wheel", handleWheel);
     },
-    set onend(callback) {
-      onend = callback;
-    },
-    loadModel(data) {
-      const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-      post({ type: "load-model", data: bytes });
-    },
-    setTime(time) {
-      stopPlayback();
-      post({ type: "set-time", time });
-    },
-    setTimeRange(minTime, maxTime) {
-      post({ type: "set-time-range", minTime, maxTime });
-    },
-    play(options = {}) {
-      stopPlayback();
-      playbackFrom = options.from ?? 0;
-      playbackTo = options.to ?? 1;
-      playbackDuration = Math.max(0.001, options.duration ?? 6);
-      playbackStart = performance.now();
-      paused = false;
-      updateRunning();
-      post({ type: "set-time-range", minTime: playbackFrom, maxTime: playbackTo });
-      post({ type: "set-time", time: playbackFrom });
-      playbackFrame = requestAnimationFrame(playbackTick);
-    },
-    lookAt(camera) {
-      post({
-        type: "look-at",
-        camera: {
-          position: camera.position,
-          target: camera.target,
-          up: camera.up ?? [0, 1, 0],
-        },
-      });
-    },
-    setCamera(camera) {
-      post({
-        type: "set-camera",
-        camera: {
-          position: camera.position,
-          target: camera.target,
-          up: camera.up ?? [0, 1, 0],
-          fovyRadians: camera.fovyRadians ?? Math.PI / 4,
-          znear: camera.znear ?? 0.01,
-          zfar: camera.zfar ?? 10000,
-        },
-      });
-    },
-    pause() {
-      paused = true;
-      updateRunning();
-    },
-    resume() {
-      paused = false;
-      updateRunning();
-    },
-    dispose,
   };
+}
 
-  return renderer;
+function subtract(a: Vec3Tuple, b: Vec3Tuple): Vec3Tuple {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function length(value: Vec3Tuple): number {
+  return Math.hypot(value[0], value[1], value[2]);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
