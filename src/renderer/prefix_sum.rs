@@ -22,16 +22,20 @@ pub struct PrefixSumStage {
 }
 
 impl PrefixSumStage {
-    pub fn new(device: &wgpu::Device, len: u32) -> Result<Self, String> {
-        if !device.features().contains(wgpu::Features::SUBGROUP) {
-            return Err("prefix sum stage requires wgpu::Features::SUBGROUP".to_string());
-        }
-
+    pub fn new(device: &wgpu::Device, len: u32) -> Self {
         let prefix = create_storage_buffer(device, "splatx prefix scan data", len as usize * 4);
-        let block_scan_shader =
-            device.create_shader_module(include_wgsl!("shader/prefix_sum_block_scan.wgsl"));
-        let add_carry_shader =
-            device.create_shader_module(include_wgsl!("shader/prefix_sum_add_carry.wgsl"));
+        let has_subgroup = device.features().contains(wgpu::Features::SUBGROUP);
+        let block_scan_shader = if has_subgroup {
+            device.create_shader_module(include_wgsl!("shader/prefix_sum_block_scan.wgsl"))
+        } else {
+            tracing::info!("subgroup feature unavailable; using fallback prefix-sum stage");
+            device.create_shader_module(include_wgsl!("shader/prefix_sum_block_scan_fallback.wgsl"))
+        };
+        let add_carry_shader = if has_subgroup {
+            device.create_shader_module(include_wgsl!("shader/prefix_sum_add_carry.wgsl"))
+        } else {
+            device.create_shader_module(include_wgsl!("shader/prefix_sum_add_carry_fallback.wgsl"))
+        };
 
         let pipeline_write_sum = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("splatx prefix block_scan_write_sum"),
@@ -109,7 +113,7 @@ impl PrefixSumStage {
             }));
         }
 
-        Ok(Self {
+        Self {
             prefix,
             block_sums,
             pipeline_write_sum,
@@ -121,7 +125,7 @@ impl PrefixSumStage {
             level_lengths,
             max_dispatch_dim: device.limits().max_compute_workgroups_per_dimension,
             len,
-        })
+        }
     }
 
     pub fn execute(

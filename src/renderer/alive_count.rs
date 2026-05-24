@@ -1,6 +1,12 @@
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
 pub struct AliveCountStage {
     readback: wgpu::Buffer,
     len: u32,
+    pending: Arc<AtomicBool>,
 }
 
 impl AliveCountStage {
@@ -12,7 +18,11 @@ impl AliveCountStage {
             mapped_at_creation: false,
         });
 
-        Self { readback, len }
+        Self {
+            readback,
+            len,
+            pending: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     pub fn execute(
@@ -20,8 +30,16 @@ impl AliveCountStage {
         encoder: &mut wgpu::CommandEncoder,
         mask: &wgpu::Buffer,
         prefix: &wgpu::Buffer,
+        time: f32,
     ) {
         if self.len == 0 {
+            return;
+        }
+        if self.pending.swap(true, Ordering::Relaxed) {
+            tracing::info!(
+                time,
+                "alive gaussian count readback is still pending; skipping this frame"
+            );
             return;
         }
 
@@ -30,9 +48,11 @@ impl AliveCountStage {
         encoder.copy_buffer_to_buffer(mask, last_offset, &self.readback, 4, 4);
 
         let readback = self.readback.clone();
+        let pending = self.pending.clone();
         encoder.map_buffer_on_submit(&self.readback, wgpu::MapMode::Read, ..8, move |result| {
             if let Err(error) = result {
-                tracing::warn!("failed to read alive gaussian count: {error}");
+                tracing::warn!(time, "failed to read alive gaussian count: {error}");
+                pending.store(false, Ordering::Relaxed);
                 return;
             }
 
@@ -40,9 +60,10 @@ impl AliveCountStage {
             let prefix_last = u32::from_le_bytes(bytes[0..4].try_into().expect("prefix last"));
             let mask_last = u32::from_le_bytes(bytes[4..8].try_into().expect("mask last"));
             let alive_gaussians = prefix_last + mask_last;
-            tracing::info!(alive_gaussians, "alive gaussian count");
+            tracing::info!(time, alive_gaussians, "alive gaussian count");
             drop(bytes);
             readback.unmap();
+            pending.store(false, Ordering::Relaxed);
         });
     }
 }

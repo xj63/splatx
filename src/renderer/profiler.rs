@@ -1,9 +1,15 @@
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
 const MAX_PROFILED_DISPATCHES: usize = 32;
 const QUERY_COUNT: usize = MAX_PROFILED_DISPATCHES * 2;
 const TIMESTAMP_BYTES: usize = QUERY_COUNT * 8;
 
 pub struct GpuProfiler {
     backend: Option<TimestampBackend>,
+    pending: Arc<AtomicBool>,
 }
 
 impl GpuProfiler {
@@ -18,14 +24,29 @@ impl GpuProfiler {
             None
         };
 
-        Self { backend }
+        Self {
+            backend,
+            pending: Arc::new(AtomicBool::new(false)),
+        }
     }
 
-    pub fn begin_frame(&mut self) -> GpuProfilerFrame<'_> {
+    pub fn begin_frame(&mut self, time: f32) -> GpuProfilerFrame<'_> {
+        let backend = if self.pending.load(Ordering::Relaxed) {
+            tracing::info!(
+                time,
+                "gpu profiler readback is still pending; skipping this frame"
+            );
+            None
+        } else {
+            self.backend.as_mut()
+        };
+
         GpuProfilerFrame {
-            backend: self.backend.as_mut(),
+            backend,
             stage_names: Vec::with_capacity(MAX_PROFILED_DISPATCHES),
             next_query: 0,
+            pending: self.pending.clone(),
+            time,
         }
     }
 }
@@ -34,6 +55,8 @@ pub struct GpuProfilerFrame<'a> {
     backend: Option<&'a mut TimestampBackend>,
     stage_names: Vec<&'static str>,
     next_query: u32,
+    pending: Arc<AtomicBool>,
+    time: f32,
 }
 
 impl GpuProfilerFrame<'_> {
@@ -59,15 +82,18 @@ impl GpuProfilerFrame<'_> {
         if self.stage_names.is_empty() {
             return;
         }
+        self.pending.store(true, Ordering::Relaxed);
 
         let byte_len = self.next_query as u64 * 8;
         encoder.resolve_query_set(&backend.query_set, 0..self.next_query, &backend.resolve, 0);
         encoder.copy_buffer_to_buffer(&backend.resolve, 0, &backend.readback, 0, byte_len);
 
         let readback = backend.readback.clone();
+        let pending = self.pending.clone();
         let frame = CompletedFrame {
             stage_names: self.stage_names,
             period_ns: backend.period_ns,
+            time: self.time,
         };
 
         encoder.map_buffer_on_submit(
@@ -77,6 +103,7 @@ impl GpuProfilerFrame<'_> {
             move |result| {
                 if let Err(error) = result {
                     tracing::warn!("failed to read gpu profiler timestamps: {error}");
+                    pending.store(false, Ordering::Relaxed);
                     return;
                 }
 
@@ -84,6 +111,7 @@ impl GpuProfilerFrame<'_> {
                 frame.log(&view);
                 drop(view);
                 readback.unmap();
+                pending.store(false, Ordering::Relaxed);
             },
         );
     }
@@ -105,6 +133,7 @@ impl GpuProfilerFrame<'_> {
 struct CompletedFrame {
     stage_names: Vec<&'static str>,
     period_ns: f32,
+    time: f32,
 }
 
 impl CompletedFrame {
@@ -123,7 +152,7 @@ impl CompletedFrame {
                     .expect("dispatch end timestamp"),
             );
             let elapsed_ms = end.saturating_sub(start) as f64 * self.period_ns as f64 / 1_000_000.0;
-            tracing::info!(stage, elapsed_ms, "gpu dispatch");
+            tracing::info!(time = self.time, stage, elapsed_ms, "gpu dispatch");
         }
     }
 }

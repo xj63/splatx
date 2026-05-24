@@ -113,10 +113,7 @@ impl WebRenderer {
         let cursor = std::io::Cursor::new(bytes);
         let model = SplatxModel::load_npz_reader(cursor)
             .map_err(|err| JsValue::from_str(&err.to_string()))?;
-        self.renderer = Some(
-            Renderer::new(&self.device, &self.queue, model)
-                .map_err(|err| JsValue::from_str(&err))?,
-        );
+        self.renderer = Some(Renderer::new(&self.device, &self.queue, model));
         Ok(())
     }
 
@@ -171,20 +168,18 @@ impl WebRenderer {
             });
 
         if let Some(renderer) = self.renderer.as_mut() {
-            renderer
-                .render(
-                    &self.camera,
-                    t,
-                    RenderTarget {
-                        encoder: &mut encoder,
-                        queue: &self.queue,
-                        color_view: &view,
-                        format: self.config.format,
-                        width: self.config.width,
-                        height: self.config.height,
-                    },
-                )
-                .map_err(|err| JsValue::from_str(&err))?;
+            renderer.render(
+                &self.camera,
+                t,
+                RenderTarget {
+                    encoder: &mut encoder,
+                    queue: &self.queue,
+                    color_view: &view,
+                    format: self.config.format,
+                    width: self.config.width,
+                    height: self.config.height,
+                },
+            )
         }
 
         self.queue.submit([encoder.finish()]);

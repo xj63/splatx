@@ -136,7 +136,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
 
     let gpu = pollster::block_on(create_gpu())?;
-    let mut renderer = Renderer::new(&gpu.device, &gpu.queue, model)?;
+    let mut renderer = Renderer::new(&gpu.device, &gpu.queue, model);
     let pixels = render_image(&gpu, &mut renderer, &camera, args.time, width, height)?;
     write_png(&args.output, width, height, pixels)?;
 
@@ -242,7 +242,8 @@ fn render_image(
             width,
             height,
         },
-    )?;
+    );
+    renderer.analyze_visibility_buffers(&gpu.device, &mut encoder, time);
 
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {

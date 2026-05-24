@@ -1,5 +1,5 @@
 import "./style.css";
-import { createRenderer } from "../ts/index.ts";
+import { createRenderer, type Camera } from "../ts/index.ts";
 
 const bundledModels = [
   "coffee_martini_S.npz",
@@ -26,6 +26,90 @@ function resourceToFetchUrl(resource: string): string {
   }
 
   return resource.startsWith("/") ? resource : `/${resource}`;
+}
+
+function modelResourceToCameraJsonResource(resource: string): string | null {
+  const match = resource.match(/^(.*?)(?:_[SL])?\.npz$/i);
+  if (!match) {
+    return null;
+  }
+
+  return `${match[1]}_poses_bounds.json`;
+}
+
+type JsonCameraSet = {
+  cameras: JsonCamera[];
+};
+
+type JsonCamera = {
+  id: number;
+  intrinsics: {
+    height: number;
+    width: number;
+    focal_length: number;
+  };
+  bounds: {
+    near: number;
+    far: number;
+  };
+  rotation: [
+    [number, number, number],
+    [number, number, number],
+    [number, number, number],
+  ];
+  position: [number, number, number];
+};
+
+function defaultCameraFromJson(camera: JsonCamera): Camera {
+  const position = camera.position;
+  const up: [number, number, number] = [
+    camera.rotation[0][1],
+    camera.rotation[1][1],
+    camera.rotation[2][1],
+  ];
+  const forward: [number, number, number] = [
+    -camera.rotation[0][2],
+    -camera.rotation[1][2],
+    -camera.rotation[2][2],
+  ];
+  const target: [number, number, number] = [
+    position[0] + forward[0],
+    position[1] + forward[1],
+    position[2] + forward[2],
+  ];
+  const fovyRadians =
+    2 * Math.atan((camera.intrinsics.height * 0.5) / camera.intrinsics.focal_length);
+
+  return {
+    position,
+    target,
+    up,
+    fovyRadians,
+    znear: Math.max(0.001, camera.bounds.near),
+    zfar: Math.max(camera.bounds.far, camera.bounds.near + 0.001),
+  };
+}
+
+async function loadDefaultCamera(resource: string): Promise<void> {
+  const cameraResource = modelResourceToCameraJsonResource(resource);
+  if (!cameraResource) {
+    return;
+  }
+
+  const response = await fetch(resourceToFetchUrl(cameraResource));
+  if (!response.ok) {
+    throw new Error(
+      `failed to load camera json: ${response.status} ${response.statusText}`,
+    );
+  }
+
+  const cameraSet = (await response.json()) as JsonCameraSet;
+  const camera = cameraSet.cameras.find((item) => item.id === 0);
+  if (!camera) {
+    throw new Error("camera id 0 not found");
+  }
+
+  renderer.setCamera(defaultCameraFromJson(camera));
 }
 
 function setResourceHash(resource: string) {
@@ -78,13 +162,15 @@ function renderFrame(now: number) {
 
 async function loadResource(resource: string) {
   const url = resourceToFetchUrl(resource);
-  const response = await fetch(url);
+  const [modelResponse] = await Promise.all([fetch(url), loadDefaultCamera(resource)]);
 
-  if (!response.ok) {
-    throw new Error(`failed to load model: ${response.status} ${response.statusText}`);
+  if (!modelResponse.ok) {
+    throw new Error(
+      `failed to load model: ${modelResponse.status} ${modelResponse.statusText}`,
+    );
   }
 
-  renderer.loadModel(await response.arrayBuffer());
+  renderer.loadModel(await modelResponse.arrayBuffer());
   startPlayback();
 }
 

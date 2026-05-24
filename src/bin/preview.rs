@@ -60,10 +60,7 @@ impl PreviewSurface {
             .ok_or_else(|| "surface is not supported by the selected adapter".to_string())?;
         surface.configure(&device, &config);
 
-        let renderer = match model {
-            Some(model) => Some(Renderer::new(&device, &queue, model)?),
-            None => None,
-        };
+        let renderer = model.map(|model| Renderer::new(&device, &queue, model));
 
         Ok(Self {
             surface,
@@ -123,7 +120,7 @@ impl PreviewSurface {
                     width: self.config.width,
                     height: self.config.height,
                 },
-            )?;
+            );
         }
 
         self.queue.submit([encoder.finish()]);

@@ -83,7 +83,7 @@ impl CullStage {
         queue: &wgpu::Queue,
         profiler: &mut GpuProfilerFrame<'_>,
         params: CullParams,
-    ) -> Result<(), String> {
+    ) {
         let uniform = CullUniform {
             view_projection: params.view_projection,
             time: params.time,
@@ -103,8 +103,6 @@ impl CullStage {
                 pass.dispatch_workgroups(self.len.div_ceil(64), 1, 1);
             });
         }
-
-        Ok(())
     }
 }
 
