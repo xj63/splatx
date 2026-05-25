@@ -6,6 +6,7 @@ mod indirect;
 mod prefix_sum;
 mod profiler;
 mod project;
+mod sort;
 mod util;
 
 use crate::{camera::Camera, model::SplatxModel};
@@ -19,7 +20,8 @@ use self::{
     prefix_sum::PrefixSumStage,
     profiler::GpuProfiler,
     project::{PROJECT_WORKGROUP_SIZE, ProjectStage},
-    util::schedule_u32_buffer_stats_log,
+    sort::SortStage,
+    util::{schedule_depth_sort_validation_log, schedule_u32_buffer_stats_log},
 };
 
 pub struct RenderTarget<'a> {
@@ -45,6 +47,7 @@ pub struct Renderer {
     compact: CompactStage,
     indirect: IndirectStage,
     project: ProjectStage,
+    sort: SortStage,
     alive_count: AliveCountStage,
     profiler: GpuProfiler,
 }
@@ -71,6 +74,13 @@ impl Renderer {
             compact.alive_indices(),
             indirect.dispatch_args(),
         );
+        let sort = SortStage::new(
+            device,
+            len,
+            project.depths(),
+            compact.alive_indices(),
+            indirect.dispatch_args(),
+        );
         let alive_count = AliveCountStage::new(device, len);
 
         Self {
@@ -81,6 +91,7 @@ impl Renderer {
             compact,
             indirect,
             project,
+            sort,
             alive_count,
             profiler,
         }
@@ -125,6 +136,7 @@ impl Renderer {
             target.width,
             target.height,
         );
+        self.sort.execute(target.encoder, &mut profiler);
 
         profiler.finish(target.encoder);
     }
@@ -153,6 +165,21 @@ impl Renderer {
             "indirect",
             self.indirect.dispatch_args(),
             4,
+        );
+        schedule_u32_buffer_stats_log(
+            device,
+            encoder,
+            "sorted_indices",
+            self.sort.sorted_indices(),
+            len,
+        );
+        schedule_depth_sort_validation_log(
+            device,
+            encoder,
+            self.sort.sorted_keys(),
+            self.sort.sorted_indices(),
+            self.indirect.dispatch_args(),
+            len,
         );
     }
 

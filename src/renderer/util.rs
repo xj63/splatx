@@ -77,6 +77,114 @@ pub fn schedule_u32_buffer_stats_log(
     });
 }
 
+pub fn schedule_depth_sort_validation_log(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    sorted_keys: &wgpu::Buffer,
+    sorted_indices: &wgpu::Buffer,
+    indirect: &wgpu::Buffer,
+    capacity: usize,
+) {
+    let keys_byte_len = (capacity * std::mem::size_of::<u32>()) as u64;
+    let indices_byte_len = keys_byte_len;
+    let indirect_byte_len = (4 * std::mem::size_of::<u32>()) as u64;
+    let total_byte_len = keys_byte_len + indices_byte_len + indirect_byte_len;
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("splatx depth sort validation readback"),
+        size: total_byte_len.max(4),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    encoder.copy_buffer_to_buffer(sorted_keys, 0, &readback, 0, keys_byte_len);
+    encoder.copy_buffer_to_buffer(
+        sorted_indices,
+        0,
+        &readback,
+        keys_byte_len,
+        indices_byte_len,
+    );
+    encoder.copy_buffer_to_buffer(
+        indirect,
+        0,
+        &readback,
+        keys_byte_len + indices_byte_len,
+        indirect_byte_len,
+    );
+
+    let mapped = readback.clone();
+    encoder.map_buffer_on_submit(
+        &readback,
+        wgpu::MapMode::Read,
+        0..total_byte_len,
+        move |result| {
+            if let Err(error) = result {
+                tracing::warn!("failed to validate depth sort: {error}");
+                return;
+            }
+
+            let bytes = mapped.get_mapped_range(..total_byte_len);
+            let keys = bytemuck::cast_slice::<u8, u32>(&bytes[..keys_byte_len as usize]);
+            let indices = bytemuck::cast_slice::<u8, u32>(
+                &bytes[keys_byte_len as usize..(keys_byte_len + indices_byte_len) as usize],
+            );
+        let indirect_values = bytemuck::cast_slice::<u8, u32>(
+            &bytes[(keys_byte_len + indices_byte_len) as usize..total_byte_len as usize],
+        );
+        let alive_count = indirect_values.get(3).copied().unwrap_or(0) as usize;
+        let count = alive_count.min(capacity);
+
+            let decoded_depths = keys
+                .iter()
+                .take(count)
+                .map(|&key| f32::from_bits(u32::MAX - key))
+                .collect::<Vec<_>>();
+            let monotonic_desc = decoded_depths
+                .windows(2)
+                .all(|pair| pair[0] + 1e-5 >= pair[1]);
+            let inversion_count = decoded_depths
+                .windows(2)
+                .filter(|pair| pair[0] + 1e-5 < pair[1])
+                .count();
+            let first_depths = decoded_depths.iter().take(3).copied().collect::<Vec<_>>();
+            let mut last_depths = decoded_depths
+                .iter()
+                .rev()
+                .take(3)
+                .copied()
+                .collect::<Vec<_>>();
+            last_depths.reverse();
+            let first_indices = indices
+                .iter()
+                .take(count.min(3))
+                .copied()
+                .collect::<Vec<_>>();
+            let mut last_indices = indices
+                .iter()
+                .take(count)
+                .rev()
+                .take(3)
+                .copied()
+                .collect::<Vec<_>>();
+            last_indices.reverse();
+
+            tracing::info!(
+                alive_count = count,
+                monotonic_desc,
+                inversion_count,
+                first_depths = %format_f32_slice(&first_depths),
+                last_depths = %format_f32_slice(&last_depths),
+                first_indices = %format_u32_slice(&first_indices),
+                last_indices = %format_u32_slice(&last_indices),
+                "depth sort validation"
+            );
+
+            drop(bytes);
+            mapped.unmap();
+        },
+    );
+}
+
 struct U32Stats {
     len: usize,
     mean: f64,
@@ -126,6 +234,17 @@ fn format_u32_slice(values: &[u32]) -> String {
         values
             .iter()
             .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn format_f32_slice(values: &[f32]) -> String {
+    format!(
+        "[{}]",
+        values
+            .iter()
+            .map(|value| format!("{value:.6}"))
             .collect::<Vec<_>>()
             .join(", ")
     )
