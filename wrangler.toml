@@ -1,0 +1,5 @@
+name = "splatx"
+compatibility_date = "2026-05-26"
+
+[assets]
+directory = "./dist-demo"
