@@ -1,9 +1,9 @@
 # splatx
 
-`splatx` 是一个基于 **WebGPU (wgpu)** 的试验性 **3D & 4D Gaussian Splatting (4DGS)** 渲染器实现。本项目主要用于探索在 Web 环境下利用 GPU 计算管线实现动态高斯泼溅渲染的技术可行性。
+`splatx` 是一个基于 **WebGPU (wgpu)** 的试验性 **3D & 4D Gaussian Splatting (4DGS)** 渲染器实现。
 
 > [!CAUTION]
-> **试验性项目**：本项目目前处于早期开发阶段，尚未经过深度性能优化。在当前实现下，复杂场景的渲染帧率可能较低（约 15 FPS），主要用于技术研究和原型验证。
+> **试验性项目**：本项目目前处于早期研发阶段，尚未进行深度性能优化。在当前实现下，复杂场景的渲染帧率低，主要用于算法验证与原型展示。
 
 ---
 
@@ -39,26 +39,32 @@
 - **`render-image`**: 离线渲染脚本，可将特定时间点的场景渲染并保存为 PNG 图片。
 - **`inspect-npz`**: 辅助工具，用于打印和分析模型文件的张量统计信息。
 
-### 2.2 Web 绑定与 Demo (`ts/` & `demo/`)
-- **Web Worker 驱动**：渲染核心运行在独立 Worker 中，通过 `OffscreenCanvas` 渲染，避免阻塞浏览器主线程。
-- **TypeScript 封装**：提供了简洁的接口用于加载模型和控制相机。
+### 2.2 TypeScript 库接口 (`ts/`)
+本项目的前端核心接口层，负责与 WASM 模块通信。
+- **`index.ts`**: 暴露给外部调用的 `Renderer` 类，管理渲染循环、相机控制及资源调度。
+- **`worker.ts`**: 基于 Web Worker 的异步驱动，确保 WebGPU 重负载不影响浏览器主线程响应。
 
-### 2.3 离线转换工具 (`tool/`)
-- 提供 Python 脚本用于将 OMG-4D/FTGS 原始权重转换为本项目兼容的 `.npz` 格式，并处理坐标系对齐。
+### 2.3 Web 演示应用 (`demo/`)
+基于 `ts/` 库构建的交互式 Web 示例。
+- 提供模型加载界面与交互式相机控制。
+
+### 2.4 离线转换工具 (`tool/`)
+- 包含 Python 脚本，用于将 OMG-4D/FTGS 原始权重转换为本项目兼容的 `.npz` 格式。
 
 ---
 
 ## 3. 快速开始
 
-### 依赖
+### 环境要求
 - **Rust**: 1.80+
-- **Bun**: 前端构建
+- **Bun**: 前端构建工具
 - **WebGPU 兼容的浏览器** (如 Chrome 113+)
 
 ### 运行
 1. **编译 WASM**: `bun run build:wasm`
 2. **启动 Web Demo**: `bun run dev`
 3. **原生预览**: `cargo run --release --bin preview -- <model_path>`
+4. **离线渲染示例**: `cargo run --release --bin render-image -- demo/public/model/coffee_martini_S.npz`
 
 ---
 
