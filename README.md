@@ -68,6 +68,64 @@
 
 ---
 
-## 4. 许可证
+## 4. Rust 接口使用示例
+
+作为原生库引入时，可以通过以下方式调用 `splatx` 的渲染接口：
+
+```rust
+use glam::Vec3;
+use splatx::{
+    camera::Camera,
+    model::SplatxModel,
+    renderer::{RenderTarget, Renderer},
+};
+
+fn render_example(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    output_view: &wgpu::TextureView,
+    width: u32,
+    height: u32,
+) {
+    // 1. 加载模型数据
+    let model = SplatxModel::load_npz("path/to/model.npz").unwrap();
+
+    // 2. 初始化渲染器
+    let mut renderer = Renderer::new(device, queue, model);
+
+    // 3. 设置相机参数
+    let camera = Camera {
+        position: Vec3::new(0.0, 0.0, -3.0),
+        target: Vec3::ZERO,
+        up: Vec3::Y,
+        fovy_radians: std::f32::consts::FRAC_PI_4,
+        znear: 0.1,
+        zfar: 100.0,
+    };
+
+    // 4. 创建 CommandEncoder 并配置 RenderTarget
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+    let target = RenderTarget {
+        encoder: &mut encoder,
+        queue,
+        color_view: output_view,
+        format: wgpu::TextureFormat::Rgba8Unorm, // 根据实际输出纹理格式调整
+        width,
+        height,
+    };
+
+    // 5. 执行渲染 (传入相机和当前时间)
+    let time = 0.0;
+    renderer.render(&camera, time, target);
+
+    // 6. 提交指令到 GPU 队列
+    queue.submit(Some(encoder.finish()));
+}
+```
+
+---
+
+## 5. 许可证
 
 [MIT License](LICENSE)
