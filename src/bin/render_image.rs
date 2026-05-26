@@ -123,7 +123,7 @@ fn render_image(
     width: u32,
     height: u32,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    let format = wgpu::TextureFormat::Rgba8Unorm;
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("splatx render-image texture"),
         size: wgpu::Extent3d {

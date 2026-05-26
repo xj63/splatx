@@ -1,5 +1,6 @@
 mod alive_count;
 mod appearance;
+mod blit;
 mod compact;
 mod cull;
 mod data;
@@ -16,6 +17,7 @@ use crate::{camera::Camera, model::SplatxModel};
 use self::{
     alive_count::AliveCountStage,
     appearance::AppearanceStage,
+    blit::BlitStage,
     compact::CompactStage,
     cull::{CullParams, CullStage},
     data::{GpuModelData, upload_model},
@@ -55,8 +57,17 @@ pub struct Renderer {
     project: ProjectStage,
     sort: SortStage,
     render: RenderStage,
+    blit: BlitStage,
+    fp16_target: Option<Fp16Target>,
     alive_count: AliveCountStage,
     profiler: GpuProfiler,
+}
+
+struct Fp16Target {
+    width: u32,
+    height: u32,
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
 }
 
 impl Renderer {
@@ -103,6 +114,7 @@ impl Renderer {
             sort.sorted_indices(),
             indirect.draw_args(),
         );
+        let blit = BlitStage::new(device);
         let alive_count = AliveCountStage::new(device, len);
 
         Self {
@@ -117,6 +129,8 @@ impl Renderer {
             project,
             sort,
             render,
+            blit,
+            fp16_target: None,
             alive_count,
             profiler,
         }
@@ -124,13 +138,15 @@ impl Renderer {
 
     pub fn render(&mut self, camera: &Camera, time: f32, target: RenderTarget<'_>) {
         let mut target = target;
+        self.ensure_fp16_target(target.width, target.height);
+        let fp16_target = self.fp16_target.as_ref().expect("fp16 target");
         let view_projection = camera
             .view_projection_matrix(target.aspect_ratio())
             .to_cols_array();
 
         let mut profiler = self.profiler.begin_frame(time);
 
-        Self::clear(&mut target, wgpu::Color::BLACK);
+        Self::clear_view(target.encoder, &fp16_target.view, wgpu::Color::BLACK);
 
         self.cull.execute(
             target.encoder,
@@ -168,10 +184,17 @@ impl Renderer {
             &self.device,
             target.queue,
             target.encoder,
-            target.color_view,
-            target.format,
+            &fp16_target.view,
+            wgpu::TextureFormat::Rgba16Float,
             target.width,
             target.height,
+        );
+        self.blit.execute(
+            &self.device,
+            target.encoder,
+            &fp16_target.view,
+            target.color_view,
+            target.format,
         );
 
         profiler.finish(target.encoder);
@@ -219,22 +242,57 @@ impl Renderer {
         );
     }
 
-    pub fn clear(target: &mut RenderTarget<'_>, color: wgpu::Color) {
-        target
-            .encoder
-            .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("splatx clear pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target.color_view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(color),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                ..Default::default()
-            });
+    fn ensure_fp16_target(&mut self, width: u32, height: u32) {
+        let needs_recreate = self
+            .fp16_target
+            .as_ref()
+            .map(|target| target.width != width || target.height != height)
+            .unwrap_or(true);
+        if !needs_recreate {
+            return;
+        }
+
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("splatx fp16 render target"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.fp16_target = Some(Fp16Target {
+            width,
+            height,
+            texture,
+            view,
+        });
+    }
+
+    fn clear_view(
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        color: wgpu::Color,
+    ) {
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("splatx clear pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(color),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
     }
 }
 
