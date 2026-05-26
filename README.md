@@ -1,89 +1,67 @@
 # splatx
 
-`splatx` 是一个基于 **WebGPU (wgpu)** 的高性能 **3D & 4D Gaussian Splatting (高斯泼溅)** 渲染器。它采用 Rust 编写核心逻辑，并通过 WebAssembly (WASM) 运行在浏览器中，利用 GPU 的计算能力实现流畅的动态场景渲染。
+`splatx` 是一个基于 **WebGPU (wgpu)** 的试验性 **3D & 4D Gaussian Splatting (4DGS)** 渲染器实现。本项目主要用于探索在 Web 环境下利用 GPU 计算管线实现动态高斯泼溅渲染的技术可行性。
 
-## 项目特点
-
-- **高性能渲染**：完全基于 WebGPU 的计算管线，支持数百万个高斯点的实时渲染。
-- **4D 动态支持**：支持随时间变化的动态场景（4DGS），内置 MLP 调制和时间相关的位置、颜色及不透明度计算。
-- **混合架构**：核心渲染引擎由 Rust 编写，Web 端通过 TypeScript 与 WebWorker 进行异步编排，确保 UI 响应不受渲染压力影响。
-- **完善的管线**：包含完整的显存管理、视锥剔除（Culling）、并行前缀和（Prefix Sum）、基数排序（Radix Sort）等 GPU 加速模块。
-- **端到端工具链**：提供 Python 脚本，支持从常见 4DGS 格式（如 OMG-4D/FTGS）转换为项目专有的 `.npz` 格式。
+> [!CAUTION]
+> **试验性项目**：本项目目前处于早期开发阶段，尚未经过深度性能优化。在当前实现下，复杂场景的渲染帧率可能较低（约 15 FPS），主要用于技术研究和原型验证。
 
 ---
 
-## 模块介绍
+## 1. 技术实现原理
 
-项目代码结构清晰，分为核心算法、渲染管线、Web 绑定和辅助工具四个部分：
+### 1.1 数据预处理与加载 (`src/model.rs`)
+系统通过 CPU 预先解析包含几何参数与轻量级 MLP 权重的 `.npz` 模型文件。
+- **协方差构建**：利用旋转四元数 $q$ 和缩放向量 $s$ 在上传前计算 3D 协方差矩阵 $\Sigma = RSS^T R^T$。
+- **数据量化**：为了权衡显存占用，大部分参数采用 **FP16** 格式存储，并通过连续结构体数组（Storage Buffer）上传至 GPU。
 
-### 1. 核心模型与数据 (`src/model.rs`)
-负责 3D/4D 高斯点数据的加载与存储。
-- **数据结构**：包含位置（Means）、时间（Times）、缩放（Scales）、旋转（Quats）、持续时间（Durations）、速度（Velocities）以及用于动态外观调制的 MLP 权重。
-- **加载器**：支持从压缩的 `.npz` 文件中高效读取半精度浮点数（f16）数据。
-
-### 2. 渲染引擎 (`src/renderer/`)
-这是项目的核心，实现了一个多阶段的 GPU 渲染管线：
-- **CullStage (`cull.rs`)**：视锥剔除与时间过滤。根据当前相机视角和时间戳，在 GPU 上并行标记可见的高斯点。
-- **PrefixSumStage (`prefix_sum.rs`)**：实现并行前缀和算法。利用 GPU Subgroup 特性，快速计算可见点的偏移量，为后续的压缩（Compact）做准备。
-- **CompactStage (`compact.rs`)**：将可见点的索引压缩到连续的缓冲区中，极大减少后续阶段的计算量。
-- **IndirectStage (`indirect.rs`)**：动态生成 GPU 间接绘制指令（Indirect Draw/Dispatch），使管线能根据剔除结果自动调整计算规模。
-- **AppearanceStage (`appearance.rs`)**：计算高斯点的颜色和不透明度。包含 4D 动态逻辑：
-    - 根据速度（Velocity）计算当前时间的位置偏移。
-    - 使用 GPU 实现的轻量级 MLP 计算随时间变化的材质属性。
-    - 计算时间衰减的不透明度（Temporal Opacity）。
-- **ProjectStage (`project.rs`)**：将 3D/4D 高斯点投影到 2D 屏幕空间，计算其在屏幕上的位置、深度和 2D 协方差矩阵。
-- **SortStage (`sort.rs`)**：基于深度的高性能基数排序（Radix Sort），确保渲染时的 Alpha 合成顺序正确。
-- **RenderStage (`render.rs`)**：最终的着色阶段，根据排序后的结果执行 Tile-based 渲染或传统的 Alpha Blending。
-
-### 3. Web 绑定与交互 (`ts/`, `src/web.rs`)
-- **TypeScript 封装**：提供易用的 API，支持 `OffscreenCanvas` 渲染。
-- **Web Worker**：渲染引擎运行在独立的 Worker 线程中，通过消息机制与主线程通信。
-- **相机控制**：内置 Orbit 控制器，支持平滑的缩放、旋转和平移交互。
-
-### 4. 转换工具 (`tool/`)
-- **`convert-omg4ftgs-to-splatx.py`**：将 OMG-4D 等模型的权重和数据转换为本项目的高效二进制格式。
-- **`poses_bounds_npy_to_json.py`**：处理相机路径和边界数据。
+### 1.2 渲染管线阶段 (`src/renderer/`)
+渲染逻辑完全运行在 GPU 计算着色器（Compute Shader）中，分为以下步骤：
+- **双重剔除 (`cull.rs`)**：
+    - **时间过滤**：应用时间窗模型 $exp(-0.5 \cdot (\frac{t-t_0}{d})^2)$ 计算瞬时透明度。
+    - **空间视锥剔除**：将高斯中心投影至剪裁空间，判断是否在视口范围内。
+- **数据压缩 (`prefix_sum.rs` & `compact.rs`)**：
+    使用并行前缀和算法统计可见点，并将稀疏的索引压缩为连续的“活跃索引”数组，以减少后续着色器的空转。
+- **神经解码 (`appearance.rs`)**：
+    在 GPU 上运行 OMG4 架构的 MLP 网络。通过 16 阶频率编码处理瞬时坐标，解码出每个基元的漫反射颜色（DC）、视角相关颜色补偿以及不透明度。
+- **投影与排序 (`project.rs` & `sort.rs`)**：
+    - 使用雅可比矩阵将 3D 高斯投影为 2D 椭圆。
+    - 采用 GPU 基数排序（Radix Sort）对可见点按深度进行全局排序。
+- **实例化光栅化 (`render.rs`)**：
+    利用硬件实例化技术将高斯点展开为四边形，在片元着色器中进行高斯衰减计算并进行 Alpha 混合。
 
 ---
 
-## 核心渲染管线流程
+## 2. 模块结构
 
-每一帧的渲染都经过以下严密的 GPU 计算步骤：
+### 2.1 命令行工具 (`src/bin/`)
+除了 Web 端支持，项目还包含了几个原生 Rust 程序：
+- **`preview`**: 简单的桌面端预览程序，用于在开发阶段快速验证渲染效果。
+- **`render-image`**: 离线渲染脚本，可将特定时间点的场景渲染并保存为 PNG 图片。
+- **`inspect-npz`**: 辅助工具，用于打印和分析模型文件的张量统计信息。
 
-1.  **可见性测试**：在 Compute Shader 中并行检查每个高斯点是否在视锥内且处于存活时间内。
-2.  **数据压缩**：通过 Prefix Sum 统计可见点总数，并将它们的索引重新排列，消除无效点。
-3.  **动态调制**：执行 Appearance Shader，应用 MLP 权重和速度场，计算该时间点下高斯点的真实物理属性。
-4.  **屏幕投影**：计算 3D 高斯体在 2D 图像上的投影形态。
-5.  **深度排序**：对所有可见点按从远到近排序。
-6.  **光栅化渲染**：在 FP16 浮点纹理上进行 Alpha 合成，最后通过 Blit 转换为标准颜色空间显示。
+### 2.2 Web 绑定与 Demo (`ts/` & `demo/`)
+- **Web Worker 驱动**：渲染核心运行在独立 Worker 中，通过 `OffscreenCanvas` 渲染，避免阻塞浏览器主线程。
+- **TypeScript 封装**：提供了简洁的接口用于加载模型和控制相机。
 
----
-
-## 快速开始
-
-### 环境依赖
-- **Rust**: 安装最新稳定的 Rust 工具链。
-- **Bun**: 用于前端构建和包管理。
-- **wasm-pack**: 用于编译 Rust 为 WebAssembly。
-
-### 构建与运行
-1.  **编译 WASM 核心**：
-    ```bash
-    bun run build:wasm
-    ```
-2.  **启动开发服务器**：
-    ```bash
-    bun run dev
-    ```
-    启动后访问 `http://localhost:5173` 查看示例。
-
-3.  **生产环境打包**：
-    ```bash
-    bun run build
-    ```
+### 2.3 离线转换工具 (`tool/`)
+- 提供 Python 脚本用于将 OMG-4D/FTGS 原始权重转换为本项目兼容的 `.npz` 格式，并处理坐标系对齐。
 
 ---
 
-## 许可证
+## 3. 快速开始
 
-本项目采用 [MIT License](LICENSE) 开源。
+### 依赖
+- **Rust**: 1.80+
+- **Bun**: 前端构建
+- **WebGPU 兼容的浏览器** (如 Chrome 113+)
+
+### 运行
+1. **编译 WASM**: `bun run build:wasm`
+2. **启动 Web Demo**: `bun run dev`
+3. **原生预览**: `cargo run --release --bin preview -- <model_path>`
+
+---
+
+## 4. 许可证
+
+[MIT License](LICENSE)
