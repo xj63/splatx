@@ -9,6 +9,8 @@ pub struct GpuModelData {
     pub covariances: wgpu::Buffer,
     pub features_static: wgpu::Buffer,
     pub features_view: wgpu::Buffer,
+    pub weights_cont: wgpu::Buffer,
+    pub weights_attr: wgpu::Buffer,
 }
 
 pub fn upload_model(device: &wgpu::Device, model: &SplatxModel) -> GpuModelData {
@@ -24,6 +26,12 @@ pub fn upload_model(device: &wgpu::Device, model: &SplatxModel) -> GpuModelData 
             device,
             "splatx view features",
             &build_padded_features(&model.features_view),
+        ),
+        weights_cont: upload_f16_storage(device, "splatx mlp cont", &model.mlp_cont),
+        weights_attr: upload_f16_storage(
+            device,
+            "splatx mlp attr",
+            &build_attr_weights(model),
         ),
     }
 }
@@ -60,6 +68,15 @@ fn build_padded_features(features: &[[f16; 3]]) -> Vec<f16> {
         output.push(f16::ZERO);
     }
 
+    output
+}
+
+fn build_attr_weights(model: &SplatxModel) -> Vec<f16> {
+    let mut output =
+        Vec::with_capacity(model.mlp_dc.len() + model.mlp_opacity.len() + model.mlp_sh.len());
+    output.extend_from_slice(&model.mlp_dc);
+    output.extend_from_slice(&model.mlp_opacity);
+    output.extend_from_slice(&model.mlp_sh);
     output
 }
 

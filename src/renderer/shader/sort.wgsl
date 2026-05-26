@@ -64,7 +64,7 @@ fn preprocess(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     keys_a[index] = encode_depth_key(depths[index]);
-    payload_a[index] = alive_indices[index];
+    payload_a[index] = index;
 }
 
 @compute @workgroup_size(1)

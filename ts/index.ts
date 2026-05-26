@@ -61,7 +61,7 @@ export async function createRenderer(
   const resize = createResizeTracker(canvas, (size) => {
     post({ type: "resize", ...size });
   });
-  const cameraControls = createOrbitCameraControls(canvas, setCamera);
+  const cameraControls = createOrbitCameraControls(canvas, applyCamera);
 
   let disposed = false;
 
@@ -71,10 +71,19 @@ export async function createRenderer(
     }
   }
 
-  function setCamera(camera: Camera) {
+  function applyCamera(camera: Required<Camera>) {
     post({
       type: "set-camera",
-      camera: normalizeCamera(camera),
+      camera,
+    });
+  }
+
+  function setCamera(camera: Camera) {
+    const normalized = normalizeCamera(camera);
+    cameraControls.setCamera(normalized);
+    post({
+      type: "set-camera",
+      camera: normalized,
     });
   }
 
@@ -192,25 +201,37 @@ function createVisibilityTracker(canvas: HTMLCanvasElement) {
 
 function createOrbitCameraControls(
   canvas: HTMLCanvasElement,
-  setCamera: (camera: Camera) => void,
+  applyCamera: (camera: Required<Camera>) => void,
 ) {
-  const target = defaultCamera.target;
-  const up = defaultCamera.up;
-  const fovyRadians = defaultCamera.fovyRadians;
-  const znear = defaultCamera.znear;
-  const zfar = defaultCamera.zfar;
-  const initialOffset = subtract(defaultCamera.position, target);
-  let distance = Math.max(0.0001, length(initialOffset));
-  let yaw = Math.atan2(initialOffset[0], initialOffset[2]);
-  let pitch = Math.asin(clamp(initialOffset[1] / distance, -1, 1));
+  let target = [...defaultCamera.target] as Vec3Tuple;
+  let up = [...defaultCamera.up] as Vec3Tuple;
+  let fovyRadians = defaultCamera.fovyRadians;
+  let znear = defaultCamera.znear;
+  let zfar = defaultCamera.zfar;
+  let distance = 1;
+  let yaw = 0;
+  let pitch = 0;
   let dragging = false;
   let lastPointerX = 0;
   let lastPointerY = 0;
 
+  function setOrbitFromCamera(camera: Required<Camera>) {
+    target = [...camera.target] as Vec3Tuple;
+    up = [...camera.up] as Vec3Tuple;
+    fovyRadians = camera.fovyRadians;
+    znear = camera.znear;
+    zfar = camera.zfar;
+
+    const offset = subtract(camera.position, target);
+    distance = Math.max(0.0001, length(offset));
+    yaw = Math.atan2(offset[0], offset[2]);
+    pitch = Math.asin(clamp(offset[1] / distance, -1, 1));
+  }
+
   function sync() {
     const clampedPitch = clamp(pitch, -1.45, 1.45);
     const cp = Math.cos(clampedPitch);
-    setCamera({
+    applyCamera({
       position: [
         target[0] + Math.sin(yaw) * cp * distance,
         target[1] + Math.sin(clampedPitch) * distance,
@@ -223,6 +244,8 @@ function createOrbitCameraControls(
       zfar,
     });
   }
+
+  setOrbitFromCamera(defaultCamera);
 
   function handlePointerDown(event: PointerEvent) {
     dragging = true;
@@ -254,7 +277,7 @@ function createOrbitCameraControls(
 
   function handleWheel(event: WheelEvent) {
     event.preventDefault();
-    distance = Math.max(1.2, Math.min(20, distance * Math.exp(event.deltaY * 0.001)));
+    distance = Math.max(0.3, Math.min(20, distance * Math.exp(event.deltaY * 0.001)));
     sync();
   }
 
@@ -265,6 +288,9 @@ function createOrbitCameraControls(
   canvas.addEventListener("wheel", handleWheel, { passive: false });
 
   return {
+    setCamera(camera: Required<Camera>) {
+      setOrbitFromCamera(camera);
+    },
     sync,
     dispose() {
       canvas.removeEventListener("pointerdown", handlePointerDown);

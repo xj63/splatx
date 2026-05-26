@@ -15,6 +15,10 @@ var<storage, read> prefix: array<u32>;
 @group(0) @binding(3)
 var<storage, read_write> dispatch_args: array<u32>;
 
+// values = [vertex_count, instance_count, first_vertex, first_instance]
+@group(0) @binding(4)
+var<storage, read_write> draw_args: array<u32>;
+
 fn ceil_div(value: u32, divisor: u32) -> u32 {
     return (value + divisor - 1u) / divisor;
 }
@@ -26,6 +30,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         dispatch_args[1] = 1u;
         dispatch_args[2] = 1u;
         dispatch_args[3] = 0u;
+        draw_args[0] = 4u;
+        draw_args[1] = 0u;
+        draw_args[2] = 0u;
+        draw_args[3] = 0u;
         return;
     }
 
@@ -36,4 +44,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     dispatch_args[1] = 1u;
     dispatch_args[2] = 1u;
     dispatch_args[3] = alive_count;
+    draw_args[0] = 4u;
+    draw_args[1] = alive_count;
+    draw_args[2] = 0u;
+    draw_args[3] = 0u;
 }

@@ -8,6 +8,7 @@ use super::{
 
 pub struct IndirectStage {
     dispatch_args: wgpu::Buffer,
+    draw_args: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     pipeline: wgpu::ComputePipeline,
 }
@@ -43,6 +44,15 @@ impl IndirectStage {
                 | wgpu::BufferUsages::INDIRECT,
             mapped_at_creation: false,
         });
+        let draw_args = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("splatx indirect draw args"),
+            size: std::mem::size_of::<[u32; 4]>() as u64,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::INDIRECT,
+            mapped_at_creation: false,
+        });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("splatx indirect bind group layout"),
@@ -51,6 +61,7 @@ impl IndirectStage {
                 layout_entry(1, wgpu::BufferBindingType::Storage { read_only: true }),
                 layout_entry(2, wgpu::BufferBindingType::Storage { read_only: true }),
                 layout_entry(3, wgpu::BufferBindingType::Storage { read_only: false }),
+                layout_entry(4, wgpu::BufferBindingType::Storage { read_only: false }),
             ],
         });
         let shader = device.create_shader_module(include_wgsl!("shader/indirect.wgsl"));
@@ -75,11 +86,13 @@ impl IndirectStage {
                 bind_entry(1, mask),
                 bind_entry(2, prefix),
                 bind_entry(3, &dispatch_args),
+                bind_entry(4, &draw_args),
             ],
         });
 
         Self {
             dispatch_args,
+            draw_args,
             bind_group,
             pipeline,
         }
@@ -99,6 +112,10 @@ impl IndirectStage {
 
     pub fn dispatch_args(&self) -> &wgpu::Buffer {
         &self.dispatch_args
+    }
+
+    pub fn draw_args(&self) -> &wgpu::Buffer {
+        &self.draw_args
     }
 }
 

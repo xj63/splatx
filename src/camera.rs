@@ -25,11 +25,11 @@ impl Default for Camera {
 
 impl Camera {
     pub fn view_matrix(&self) -> Mat4 {
-        Mat4::look_at_rh(self.position, self.target, self.up)
+        Mat4::look_at_lh(self.position, self.target, self.up)
     }
 
     pub fn projection_matrix(&self, aspect: f32) -> Mat4 {
-        Mat4::perspective_rh(self.fovy_radians, aspect.max(0.0001), self.znear, self.zfar)
+        Mat4::perspective_lh(self.fovy_radians, aspect.max(0.0001), self.znear, self.zfar)
     }
 
     pub fn view_projection_matrix(&self, aspect: f32) -> Mat4 {

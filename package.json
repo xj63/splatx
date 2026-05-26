@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "build:wasm": "wasm-pack build --target bundler",
+    "build:wasm": "wasm-pack build --release --target bundler",
     "dev": "bun run build:wasm && vite --config vite.demo.config.ts",
     "preview:demo": "bun run build:demo && vite preview --config vite.demo.config.ts",
     "build:lib": "bun run build:wasm && vite build --config vite.lib.config.ts",

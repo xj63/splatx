@@ -28,89 +28,14 @@ function resourceToFetchUrl(resource: string): string {
   return resource.startsWith("/") ? resource : `/${resource}`;
 }
 
-function modelResourceToCameraJsonResource(resource: string): string | null {
-  const match = resource.match(/^(.*?)(?:_[SL])?\.npz$/i);
-  if (!match) {
-    return null;
-  }
-
-  return `${match[1]}_poses_bounds.json`;
-}
-
-type JsonCameraSet = {
-  cameras: JsonCamera[];
+const presetCamera: Camera = {
+  position: [0.44396468423162905, -1.1035034400953323, -0.3499272977464685],
+  target: [0.5478754702925966, -1.0966363123253844, 0.6446356168528959],
+  up: [-0.021732170138006792, 0.9997530962884785, -0.004632412189448103],
+  fovyRadians: 1.0,
+  znear: 8.831384232013642,
+  zfar: 109.77542390000633,
 };
-
-type JsonCamera = {
-  id: number;
-  intrinsics: {
-    height: number;
-    width: number;
-    focal_length: number;
-  };
-  bounds: {
-    near: number;
-    far: number;
-  };
-  rotation: [
-    [number, number, number],
-    [number, number, number],
-    [number, number, number],
-  ];
-  position: [number, number, number];
-};
-
-function defaultCameraFromJson(camera: JsonCamera): Camera {
-  const position = camera.position;
-  const up: [number, number, number] = [
-    camera.rotation[0][1],
-    camera.rotation[1][1],
-    camera.rotation[2][1],
-  ];
-  const forward: [number, number, number] = [
-    -camera.rotation[0][2],
-    -camera.rotation[1][2],
-    -camera.rotation[2][2],
-  ];
-  const target: [number, number, number] = [
-    position[0] + forward[0],
-    position[1] + forward[1],
-    position[2] + forward[2],
-  ];
-  const fovyRadians =
-    2 * Math.atan((camera.intrinsics.height * 0.5) / camera.intrinsics.focal_length);
-
-  return {
-    position,
-    target,
-    up,
-    fovyRadians,
-    znear: Math.max(0.001, camera.bounds.near),
-    zfar: Math.max(camera.bounds.far, camera.bounds.near + 0.001),
-  };
-}
-
-async function loadDefaultCamera(resource: string): Promise<void> {
-  const cameraResource = modelResourceToCameraJsonResource(resource);
-  if (!cameraResource) {
-    return;
-  }
-
-  const response = await fetch(resourceToFetchUrl(cameraResource));
-  if (!response.ok) {
-    throw new Error(
-      `failed to load camera json: ${response.status} ${response.statusText}`,
-    );
-  }
-
-  const cameraSet = (await response.json()) as JsonCameraSet;
-  const camera = cameraSet.cameras.find((item) => item.id === 0);
-  if (!camera) {
-    throw new Error("camera id 0 not found");
-  }
-
-  renderer.setCamera(defaultCameraFromJson(camera));
-}
 
 function setResourceHash(resource: string) {
   window.location.hash = encodeURI(resource);
@@ -139,10 +64,24 @@ const picker = createModelPicker();
 const renderer = await createRenderer(canvas);
 let frame: number | null = null;
 let playbackStart = 0;
+const MODEL_DURATION_SECONDS = 10;
+const MODEL_DURATION_MS = MODEL_DURATION_SECONDS * 1000;
+const SMALL_MODEL_FPS = 15;
+const LARGE_MODEL_FPS = 5;
+let lastRenderTime = 0;
+let frameIntervalMs = 1000 / SMALL_MODEL_FPS;
+
+function updatePlaybackProfile(resource: string) {
+  const name = resource.split("/").pop() ?? resource;
+  frameIntervalMs = name.includes("_L.")
+    ? 1000 / LARGE_MODEL_FPS
+    : 1000 / SMALL_MODEL_FPS;
+}
 
 function startPlayback() {
   stopPlayback();
   playbackStart = performance.now();
+  lastRenderTime = 0;
   frame = requestAnimationFrame(renderFrame);
 }
 
@@ -154,15 +93,22 @@ function stopPlayback() {
 }
 
 function renderFrame(now: number) {
-  const duration = 6_000;
-  const time = ((now - playbackStart) % duration) / duration;
+  if (lastRenderTime !== 0 && now - lastRenderTime < frameIntervalMs) {
+    frame = requestAnimationFrame(renderFrame);
+    return;
+  }
+
+  const time = ((now - playbackStart) % MODEL_DURATION_MS) / 1000;
+  lastRenderTime = now;
   renderer.render(time);
   frame = requestAnimationFrame(renderFrame);
 }
 
 async function loadResource(resource: string) {
   const url = resourceToFetchUrl(resource);
-  const [modelResponse] = await Promise.all([fetch(url), loadDefaultCamera(resource)]);
+  updatePlaybackProfile(resource);
+  renderer.setCamera(presetCamera);
+  const modelResponse = await fetch(url);
 
   if (!modelResponse.ok) {
     throw new Error(

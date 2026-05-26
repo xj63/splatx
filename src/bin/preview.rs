@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use glam::Vec3;
 use splatx::{
     camera::Camera,
     model::SplatxModel,
@@ -67,7 +68,7 @@ impl PreviewSurface {
             device,
             queue,
             config,
-            camera: Camera::default(),
+            camera: preset_camera(),
             time: 0.0,
             renderer,
         })
@@ -127,6 +128,18 @@ impl PreviewSurface {
         frame.present();
 
         Ok(())
+    }
+}
+
+fn preset_camera() -> Camera {
+    Camera {
+        position: Vec3::new(0.44396468, -1.1035035, -0.3499273),
+        target: Vec3::new(0.54787546, -1.0966363, 0.6446356),
+        // The roll is encoded in `up`; `Camera` itself stays a plain look-at camera.
+        up: Vec3::new(-0.02173217, 0.9997531, -0.004632412),
+        fovy_radians: 1.2135941,
+        znear: 8.831384,
+        zfar: 109.77542,
     }
 }
 

@@ -28,9 +28,12 @@ var<storage, read> alive_indices: array<u32>;
 var<storage, read> dispatch_args: array<u32>;
 
 @group(0) @binding(5)
-var<storage, read_write> projected_splats: array<vec4<f32>>;
+var<storage, read> rgba: array<vec4<f32>>;
 
 @group(0) @binding(6)
+var<storage, read_write> projected_splats: array<vec4<f32>>;
+
+@group(0) @binding(7)
 var<storage, read_write> depths: array<f32>;
 
 fn load_position(index: u32) -> vec3<f32> {
@@ -69,7 +72,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let world_covariance = load_covariance(gaussian_index);
 
     let camera_position4 = uniforms.view * vec4<f32>(world_position, 1.0);
-    let camera_z = max(-camera_position4.z, 1e-4);
+    let camera_z = max(camera_position4.z, 1e-4);
     let camera_x = camera_position4.x;
     let camera_y = camera_position4.y;
 
@@ -118,7 +121,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let v1 = sqrt(2.0 * lambda1) * direction;
     let v2 = sqrt(2.0 * lambda2) * vec2<f32>(direction.y, -direction.x);
 
-    projected_splats[alive_slot * 2u] = vec4<f32>(v_center.xy, camera_z, coef);
-    projected_splats[alive_slot * 2u + 1u] = vec4<f32>(v1, v2);
+    let final_rgba = vec4<f32>(rgba[alive_slot].xyz, rgba[alive_slot].w * coef);
+    projected_splats[alive_slot * 3u] = vec4<f32>(v_center.xy, camera_z, final_rgba.w);
+    projected_splats[alive_slot * 3u + 1u] = vec4<f32>(v1, v2);
+    projected_splats[alive_slot * 3u + 2u] = final_rgba;
     depths[alive_slot] = camera_z;
 }

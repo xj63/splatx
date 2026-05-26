@@ -1,4 +1,5 @@
 mod alive_count;
+mod appearance;
 mod compact;
 mod cull;
 mod data;
@@ -6,6 +7,7 @@ mod indirect;
 mod prefix_sum;
 mod profiler;
 mod project;
+mod render;
 mod sort;
 mod util;
 
@@ -13,6 +15,7 @@ use crate::{camera::Camera, model::SplatxModel};
 
 use self::{
     alive_count::AliveCountStage,
+    appearance::AppearanceStage,
     compact::CompactStage,
     cull::{CullParams, CullStage},
     data::{GpuModelData, upload_model},
@@ -20,6 +23,7 @@ use self::{
     prefix_sum::PrefixSumStage,
     profiler::GpuProfiler,
     project::{PROJECT_WORKGROUP_SIZE, ProjectStage},
+    render::RenderStage,
     sort::SortStage,
     util::{schedule_depth_sort_validation_log, schedule_u32_buffer_stats_log},
 };
@@ -40,14 +44,17 @@ impl RenderTarget<'_> {
 }
 
 pub struct Renderer {
+    device: wgpu::Device,
     model: SplatxModel,
     data: GpuModelData,
     cull: CullStage,
     prefix_sum: PrefixSumStage,
     compact: CompactStage,
     indirect: IndirectStage,
+    appearance: AppearanceStage,
     project: ProjectStage,
     sort: SortStage,
+    render: RenderStage,
     alive_count: AliveCountStage,
     profiler: GpuProfiler,
 }
@@ -67,12 +74,21 @@ impl Renderer {
             cull.mask(),
             prefix_sum.prefix(),
         );
-        let project = ProjectStage::new(
+        let appearance = AppearanceStage::new(
             device,
             len,
             &data,
             compact.alive_indices(),
             indirect.dispatch_args(),
+        );
+        let project = ProjectStage::new(
+            device,
+            len,
+            &data.gaussians,
+            &data.covariances,
+            compact.alive_indices(),
+            indirect.dispatch_args(),
+            appearance.rgba(),
         );
         let sort = SortStage::new(
             device,
@@ -81,17 +97,26 @@ impl Renderer {
             compact.alive_indices(),
             indirect.dispatch_args(),
         );
+        let render = RenderStage::new(
+            device,
+            project.projected(),
+            sort.sorted_indices(),
+            indirect.draw_args(),
+        );
         let alive_count = AliveCountStage::new(device, len);
 
         Self {
+            device: device.clone(),
             model,
             data,
             cull,
             prefix_sum,
             compact,
             indirect,
+            appearance,
             project,
             sort,
+            render,
             alive_count,
             profiler,
         }
@@ -127,6 +152,8 @@ impl Renderer {
             time,
         );
         self.indirect.execute(target.encoder, &mut profiler);
+        self.appearance
+            .execute(target.encoder, target.queue, &mut profiler, camera, time);
         self.project.execute(
             target.encoder,
             target.queue,
@@ -137,6 +164,15 @@ impl Renderer {
             target.height,
         );
         self.sort.execute(target.encoder, &mut profiler);
+        self.render.execute(
+            &self.device,
+            target.queue,
+            target.encoder,
+            target.color_view,
+            target.format,
+            target.width,
+            target.height,
+        );
 
         profiler.finish(target.encoder);
     }
