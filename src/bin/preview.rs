@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use glam::Vec3;
 use splatx::{
@@ -22,6 +22,8 @@ struct PreviewSurface {
     time: f32,
     renderer: Option<Renderer>,
 }
+
+const MODEL_DURATION_SECONDS: f32 = 10.0;
 
 impl PreviewSurface {
     async fn new(
@@ -145,6 +147,8 @@ fn preset_camera() -> Camera {
 
 #[derive(Default)]
 struct PreviewApp {
+    model_path: Option<PathBuf>,
+    playback_start: Option<Instant>,
     window: Option<Arc<Window>>,
     surface: Option<PreviewSurface>,
 }
@@ -161,8 +165,9 @@ impl ApplicationHandler for PreviewApp {
                 .expect("failed to create preview window"),
         );
         let size = window.inner_size();
-        let model = std::env::args()
-            .nth(1)
+        let model = self
+            .model_path
+            .as_ref()
             .map(SplatxModel::load_npz)
             .transpose()
             .expect("failed to load model");
@@ -174,6 +179,7 @@ impl ApplicationHandler for PreviewApp {
         ))
         .expect("failed to initialize preview surface");
 
+        self.playback_start = Some(Instant::now());
         self.window = Some(window);
         self.surface = Some(surface);
     }
@@ -193,6 +199,10 @@ impl ApplicationHandler for PreviewApp {
             }
             WindowEvent::RedrawRequested => {
                 if let Some(surface) = self.surface.as_mut() {
+                    if let Some(start) = self.playback_start {
+                        surface.time =
+                            start.elapsed().as_secs_f32().rem_euclid(MODEL_DURATION_SECONDS);
+                    }
                     surface.render().expect("failed to render frame");
                 }
             }
@@ -216,6 +226,17 @@ fn init_logger() {
 fn main() -> Result<(), winit::error::EventLoopError> {
     init_logger();
 
+    let model_path = std::env::args_os()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            eprintln!("usage: cargo run --bin preview -- <model.npz>");
+            std::process::exit(2);
+        });
+
     let event_loop = EventLoop::new()?;
-    event_loop.run_app(&mut PreviewApp::default())
+    event_loop.run_app(&mut PreviewApp {
+        model_path: Some(model_path),
+        ..PreviewApp::default()
+    })
 }
